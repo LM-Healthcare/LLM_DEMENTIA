@@ -5,6 +5,7 @@ Client per Ollama: gestione modelli, generazione testo e pulling.
 from __future__ import annotations
 
 import json
+import re
 import requests
 from typing import Optional, Generator
 
@@ -80,6 +81,7 @@ def generate(
         "prompt": prompt,
         "system": system,
         "stream": False,
+        "think": False,
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,
@@ -135,26 +137,45 @@ def generate_stream(
         yield f"\n[Errore streaming: {e}]"
 
 
+def _strip_think_tags(text: str) -> str:
+    """Rimuove i blocchi <think>...</think> prodotti da Qwen3 e modelli simili."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
+def _strip_markdown_fence(text: str) -> str:
+    """Rimuove le code fence markdown (```json ... ``` o ``` ... ```)."""
+    text = re.sub(r"```(?:json)?\s*", "", text)
+    text = re.sub(r"```", "", text)
+    return text.strip()
+
+
 def parse_json_response(raw: str) -> dict:
     """
     Estrae il JSON dalla risposta del modello.
-    Gestisce casi in cui il modello aggiunge testo prima/dopo il JSON.
+    Gestisce: testo prima/dopo, blocchi <think> (Qwen3), markdown code fences.
     """
-    raw = raw.strip()
-    start = raw.find("{")
-    end = raw.rfind("}") + 1
+    if not raw or not raw.strip():
+        print("[LLM] Risposta vuota dal modello")
+        return {"error": "Risposta vuota dal modello", "raw_response": raw}
+
+    cleaned = _strip_think_tags(raw)
+    cleaned = _strip_markdown_fence(cleaned)
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}") + 1
     if start == -1 or end == 0:
-        start = raw.find("[")
-        end = raw.rfind("]") + 1
+        start = cleaned.find("[")
+        end = cleaned.rfind("]") + 1
 
     if start >= 0 and end > start:
-        json_str = raw[start:end]
+        json_str = cleaned[start:end]
         try:
             return json.loads(json_str)
         except json.JSONDecodeError:
             pass
 
     try:
-        return json.loads(raw)
+        return json.loads(cleaned)
     except json.JSONDecodeError:
+        print(f"[LLM] Impossibile parsare JSON. Risposta raw (prime 600 chars):\n{raw[:600]}")
         return {"error": "Impossibile parsare JSON", "raw_response": raw}
