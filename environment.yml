@@ -20,7 +20,7 @@ dependencies:
     - langchain-ollama==0.3.3
 
     # Vector store
-    - chromadb==0.6.3
+    - chromadb>=1.0.9
 
     # PDF processing
     - pypdf==5.4.0
