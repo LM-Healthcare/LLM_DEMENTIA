@@ -1,0 +1,44 @@
+name: LLM_DEMENTIA
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - nodejs=20
+  - pip:
+    # FastAPI backend
+    - fastapi==0.115.12
+    - uvicorn[standard]==0.34.2
+    - python-multipart==0.0.20
+    - websockets==14.2
+
+    # Core LLM & RAG
+    - langchain==0.3.25
+    - langchain-community==0.3.23
+    - langchain-chroma==0.2.4
+    - langchain-ollama==0.3.3
+
+    # Vector store
+    - chromadb==0.6.3
+
+    # PDF processing
+    - pypdf==5.4.0
+
+    # Data processing
+    - pandas==2.2.3
+    - openpyxl==3.1.5
+    - numpy==2.2.5
+
+    # Ollama client
+    - ollama==0.4.8
+    - requests==2.32.3
+
+    # Ranking / retrieval
+    - rank-bm25==0.2.2
+
+    # Utilities
+    - python-dotenv==1.1.0
+    - tqdm==4.67.1
+    - pydantic==2.11.4
+    - tenacity==9.1.2
