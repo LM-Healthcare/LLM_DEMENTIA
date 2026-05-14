@@ -19,6 +19,7 @@ from config.settings import CHROMA_DB_PATH, OLLAMA_BASE_URL, OLLAMA_EMBED_MODEL
 
 PARENT_COLLECTION = "parent_chunks"
 CHILD_COLLECTION = "child_chunks"
+CHROMA_BATCH_SIZE = 5000
 
 
 def _get_embeddings() -> OllamaEmbeddings:
@@ -52,9 +53,9 @@ def build_vector_store(
 
     if force_rebuild or _is_empty(child_store):
         print(f"[VectorStore] Building child collection ({len(child_chunks)} chunks)...")
-        child_store.add_documents(child_chunks)
+        _add_batched(child_store, child_chunks)
         print(f"[VectorStore] Building parent collection ({len(parent_chunks)} chunks)...")
-        parent_store.add_documents(parent_chunks)
+        _add_batched(parent_store, parent_chunks)
         print("[VectorStore] Build complete.")
     else:
         n = child_store._collection.count()
@@ -83,6 +84,14 @@ def load_existing_store() -> tuple[Chroma | None, Chroma | None]:
     except Exception as e:
         print(f"[VectorStore] Could not load existing store: {e}")
         return None, None
+
+
+def _add_batched(store: Chroma, docs: list[Document]) -> None:
+    """Inserisce documenti in batch per rispettare il limite di ChromaDB (max ~5461)."""
+    for i in range(0, len(docs), CHROMA_BATCH_SIZE):
+        batch = docs[i : i + CHROMA_BATCH_SIZE]
+        store.add_documents(batch)
+        print(f"[VectorStore]   ... {min(i + CHROMA_BATCH_SIZE, len(docs))}/{len(docs)} chunks inseriti")
 
 
 def _is_empty(store: Chroma) -> bool:
