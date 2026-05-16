@@ -26,6 +26,16 @@ export interface PatientDetail extends PatientSummary {
   safety_labs: Record<string, number | null>
 }
 
+export interface RagSource {
+  index: number
+  source: string
+  source_path: string
+  page: number | null
+  doc_type: string
+  chunk_id: string
+  snippet: string
+}
+
 export interface StepResult {
   step: number
   patient_code: string
@@ -35,6 +45,7 @@ export interface StepResult {
   raw_response: string | null
   duration_s: number
   model_used: string
+  rag_sources: RagSource[]
 }
 
 export interface DiagnosisEntry {
@@ -54,7 +65,7 @@ export interface StepOutput {
   final_clinical_summary?: string
   key_clinical_features?: string[]
   missing_information?: string[]
-  rag_sources_used?: string[]
+  rag_sources_used?: number[]
   step1_limitations?: string
   biomarker_reliability?: {
     renal_function_ok: boolean

@@ -50,10 +50,17 @@ _JSON_SCHEMA_STEP1 = """
   ],
   "key_clinical_features": ["<feature 1>", "<feature 2>"],
   "missing_information": ["<info mancante 1>"],
-  "rag_sources_used": ["<fonte 1>"],
+  "rag_sources_used": [1, 3],
   "clinical_summary": "<riassunto clinico in 2-3 frasi>",
   "step1_limitations": "<limitazioni della valutazione basata solo su dati clinici>"
 }"""
+
+_RAG_CITATION_INSTRUCTION = """
+ISTRUZIONI PER LE FONTI BIBLIOGRAFICHE:
+- Nel campo "rag_sources_used" inserisci i NUMERI delle fonti (es. [1, 3]) che hai effettivamente usato per supportare il ragionamento.
+- Nel campo "reasoning" cita le fonti con il riferimento numerico tra parentesi quadre, es: "Secondo i criteri NIA-AA [Fonte 1], la presenza di..."
+- Cita solo le fonti che hanno concretamente influenzato la diagnosi.
+"""
 
 _JSON_SCHEMA_STEP2 = """
 {
@@ -130,7 +137,7 @@ def build_step1_prompt(
     """
     Restituisce (system_prompt, user_prompt) per lo Step 1.
     """
-    system = _SYSTEM_BASE + f"\n\nSCHEMA JSON ATTESO (Step 1):\n{_JSON_SCHEMA_STEP1}"
+    system = _SYSTEM_BASE + _RAG_CITATION_INSTRUCTION + f"\n\nSCHEMA JSON ATTESO (Step 1):\n{_JSON_SCHEMA_STEP1}"
 
     risk_factors = []
     if patient.get("fam"):

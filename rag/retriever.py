@@ -141,3 +141,25 @@ def format_context_for_prompt(docs: list[Document]) -> str:
         )
 
     return "\n\n---\n\n".join(parts)
+
+
+def extract_rag_sources(docs: list[Document]) -> list[dict]:
+    """
+    Estrae metadati strutturati dai documenti recuperati per il layer di auditability.
+    Restituisce una lista ordinata con riferimento a documento, pagina, sezione e snippet.
+    """
+    sources = []
+    for i, doc in enumerate(docs, 1):
+        meta = doc.metadata
+        raw_page = meta.get("page")
+        page = int(raw_page) + 1 if raw_page is not None else None
+        sources.append({
+            "index": i,
+            "source": meta.get("source", "Documento sconosciuto"),
+            "source_path": meta.get("source_path", ""),
+            "page": page,
+            "doc_type": meta.get("doc_type", "unknown"),
+            "chunk_id": meta.get("chunk_id", ""),
+            "snippet": doc.page_content[:400].strip(),
+        })
+    return sources

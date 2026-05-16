@@ -1,8 +1,118 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ChevronRight, Search, User, Brain, FlaskConical, CheckCircle, XCircle, AlertTriangle, Loader2 } from 'lucide-react'
+import { ChevronRight, Search, User, Brain, FlaskConical, CheckCircle, XCircle, AlertTriangle, Loader2, BookOpen, FileText, ChevronDown, ChevronUp } from 'lucide-react'
 import { api } from '@/api/client'
-import type { PatientSummary, PatientDetail, StepResult } from '@/types'
+import type { PatientSummary, PatientDetail, StepResult, RagSource } from '@/types'
+
+const DOC_TYPE_LABEL: Record<string, string> = {
+  continuum_review: 'Continuum Review',
+  reference_document: 'Riferimento',
+  unknown: 'Documento',
+}
+
+const DOC_TYPE_COLOR: Record<string, string> = {
+  continuum_review: 'bg-blue-50 text-blue-700',
+  reference_document: 'bg-purple-50 text-purple-700',
+  unknown: 'bg-slate-100 text-slate-600',
+}
+
+function RagSourcesPanel({
+  sources,
+  usedIndices,
+}: {
+  sources: RagSource[]
+  usedIndices: number[]
+}) {
+  const [open, setOpen] = useState(false)
+  const [expanded, setExpanded] = useState<Set<number>>(new Set())
+
+  if (sources.length === 0) return null
+
+  const toggleSnippet = (idx: number) => {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      next.has(idx) ? next.delete(idx) : next.add(idx)
+      return next
+    })
+  }
+
+  const usedSet = new Set(usedIndices)
+
+  return (
+    <div className="mt-3 border border-slate-200 rounded-lg overflow-hidden">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 transition-colors text-xs font-semibold text-slate-600"
+      >
+        <div className="flex items-center gap-1.5">
+          <BookOpen className="w-3.5 h-3.5 text-blue-500" />
+          <span>Fonti RAG recuperate</span>
+          <span className="ml-1 px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 font-bold">{sources.length}</span>
+          {usedSet.size > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-bold">{usedSet.size} citate</span>
+          )}
+        </div>
+        {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+      </button>
+
+      {open && (
+        <div className="divide-y divide-slate-100">
+          {sources.map(src => {
+            const isCited = usedSet.has(src.index)
+            const isExpanded = expanded.has(src.index)
+            return (
+              <div
+                key={src.index}
+                className={`px-3 py-2 text-xs ${isCited ? 'bg-green-50' : 'bg-white'}`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-2 min-w-0">
+                    <span className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
+                      isCited ? 'bg-green-500 text-white' : 'bg-slate-200 text-slate-600'
+                    }`}>
+                      {src.index}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-semibold text-slate-700 truncate max-w-[180px]" title={src.source}>
+                          {src.source.replace(/\.pdf$/i, '')}
+                        </span>
+                        {src.page != null && (
+                          <span className="flex items-center gap-0.5 text-slate-400">
+                            <FileText className="w-3 h-3" />
+                            p. {src.page}
+                          </span>
+                        )}
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${DOC_TYPE_COLOR[src.doc_type] ?? DOC_TYPE_COLOR.unknown}`}>
+                          {DOC_TYPE_LABEL[src.doc_type] ?? src.doc_type}
+                        </span>
+                        {isCited && (
+                          <span className="px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-bold">✓ Citata</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => toggleSnippet(src.index)}
+                    className="flex-shrink-0 text-slate-400 hover:text-slate-600"
+                  >
+                    {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+                {isExpanded && (
+                  <div className="mt-2 ml-7 p-2 bg-slate-50 rounded text-slate-600 leading-relaxed border-l-2 border-slate-300">
+                    {src.snippet}
+                    {src.snippet.length >= 400 && <span className="text-slate-400 italic"> [...]</span>}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
 
 const PROB_BADGE: Record<string, string> = {
   ALTA: 'badge-alta', MEDIA: 'badge-media', BASSA: 'badge-bassa', ESCLUSA: 'badge-esclusa',
@@ -99,6 +209,13 @@ function StepCard({
                 <summary className="cursor-pointer text-navy-600 font-medium hover:text-navy-800">Ragionamento clinico</summary>
                 <p className="mt-2 text-slate-600 leading-relaxed bg-slate-50 rounded p-2">{primary.reasoning}</p>
               </details>
+            )}
+
+            {step === 1 && result.rag_sources && result.rag_sources.length > 0 && (
+              <RagSourcesPanel
+                sources={result.rag_sources}
+                usedIndices={result.result?.rag_sources_used ?? []}
+              />
             )}
 
             <p className="text-xs text-slate-400">Durata: {result.duration_s}s · Modello: {result.model_used}</p>

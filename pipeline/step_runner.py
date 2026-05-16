@@ -21,7 +21,7 @@ from data.loader import build_step_payload, STEP2_PLASMA_COLS, STEP3_CSF_COLS
 from data.preprocessor import format_therapy_for_prompt
 from llm.ollama_client import generate, parse_json_response
 from llm.prompt_builder import build_step1_prompt, build_step2_prompt, build_step3_prompt
-from rag.retriever import retrieve_context, build_queries, format_context_for_prompt
+from rag.retriever import retrieve_context, build_queries, format_context_for_prompt, extract_rag_sources
 
 
 def _check_step_feasibility(record: dict, step: int) -> tuple[bool, str]:
@@ -101,7 +101,7 @@ def run_step(
         if child_store and parent_store:
             docs = retrieve_context(child_store, parent_store, queries)
             rag_context = format_context_for_prompt(docs)
-            rag_sources = [d.metadata.get("source", "?") for d in docs]
+            rag_sources = extract_rag_sources(docs)
         else:
             rag_context = "Knowledge base non disponibile."
             rag_sources = []
@@ -144,8 +144,6 @@ def run_step(
     )
 
     result = parse_json_response(raw_response)
-    if step == 1 and "rag_sources_used" not in result:
-        result["rag_sources_used"] = rag_sources if step == 1 else []
 
     duration = round(time.time() - t_start, 2)
 
@@ -158,6 +156,7 @@ def run_step(
         "raw_response": raw_response,
         "duration_s": duration,
         "model_used": model,
+        "rag_sources": rag_sources if step == 1 else [],
     }
 
 

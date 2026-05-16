@@ -49,6 +49,16 @@ class BatchRunRequest(BaseModel):
     patient_codes: Optional[list[str]] = None
 
 
+class RagSource(BaseModel):
+    index: int
+    source: str
+    source_path: str
+    page: Optional[int]
+    doc_type: str
+    chunk_id: str
+    snippet: str
+
+
 class StepResult(BaseModel):
     step: int
     patient_code: str
@@ -58,6 +68,7 @@ class StepResult(BaseModel):
     raw_response: Optional[str]
     duration_s: float
     model_used: str
+    rag_sources: list[RagSource] = []
 
 
 class PipelineResult(BaseModel):
