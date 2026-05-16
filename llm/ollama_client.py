@@ -85,6 +85,7 @@ def generate(
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,
+            "num_ctx": 32768,
             "top_p": 0.9,
             "repeat_penalty": 1.1,
         },
@@ -177,5 +178,7 @@ def parse_json_response(raw: str) -> dict:
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
-        print(f"[LLM] Impossibile parsare JSON. Risposta raw (prime 600 chars):\n{raw[:600]}")
+        print(f"[LLM] Impossibile parsare JSON. Lunghezza risposta: {len(raw)} chars")
+        print(f"[LLM] Inizio (600 chars):\n{raw[:600]}")
+        print(f"[LLM] Fine (300 chars):\n{raw[-300:]}" if len(raw) > 600 else "")
         return {"error": "Impossibile parsare JSON", "raw_response": raw}
