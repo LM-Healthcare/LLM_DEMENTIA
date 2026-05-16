@@ -27,6 +27,7 @@ ISTRUZIONI GENERALI:
 - Se un dato è mancante, segnalalo nel ragionamento senza inventare valori
 - Rispondi ESCLUSIVAMENTE in formato JSON come specificato
 - Non includere testo fuori dal JSON nella risposta
+- IMPORTANTE: nel campo "diagnosis" usa SOLO il codice breve esatto dalla lista sopra (es. "VAD", "AD", "FTD", "PD"), NON il nome esteso del la malattia
 """
 
 _JSON_SCHEMA_STEP1 = """
@@ -34,7 +35,7 @@ _JSON_SCHEMA_STEP1 = """
   "step": 1,
   "patient_code": "<codice>",
   "primary_diagnosis": {
-    "diagnosis": "<codice diagnosi>",
+    "diagnosis": "<codice esatto dalla lista: AD|VAD|SCD|PD|FTD|Mixed|LATE|AD-PPA>",
     "label": "<etichetta>",
     "probability": "ALTA|MEDIA|BASSA",
     "confidence_score": <0.0-1.0>,

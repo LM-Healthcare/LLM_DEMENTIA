@@ -68,7 +68,7 @@ def generate(
     system: str = "",
     model: str = OLLAMA_MODEL,
     temperature: float = 0.1,
-    max_tokens: int = 4096,
+    max_tokens: int = 16384,
     stream: bool = False,
 ) -> str:
     """
