@@ -25,7 +25,9 @@ from rag.retriever import retrieve_context, build_queries, format_context_for_pr
 
 
 def _check_step_feasibility(record: dict, step: int) -> tuple[bool, str]:
-    """Verifica se il paziente ha abbastanza dati per lo step."""
+    """Verifica se il paziente ha abbastanza dati per lo step.
+    Step 2 e 3 girano sempre; se i dati mancano il LLM mantiene le probabilità precedenti.
+    """
     if step == 1:
         has_anamnesi = bool(record.get("ANAMNESI", "").strip())
         if not has_anamnesi:
@@ -35,16 +37,12 @@ def _check_step_feasibility(record: dict, step: int) -> tuple[bool, str]:
     if step == 2:
         plasma_cols = ["Plasma_Ab4240", "plasma_ptau217", "plasma_pt181", "plasma_NfL"]
         available = [c for c in plasma_cols if record.get(c) is not None]
-        if len(available) == 0:
-            return False, "Tutti i biomarcatori plasmatici mancanti: Step 2 non eseguibile"
-        return True, f"Biomarcatori plasma disponibili: {len(available)}/{len(plasma_cols)}"
+        return True, f"Plasma: {len(available)}/{len(plasma_cols)} biomarcatori disponibili"
 
     if step == 3:
         csf_cols = ["CSF_Ab42", "CSF_Ab4240", "CSF_ttau", "CSF_ptau"]
         available = [c for c in csf_cols if record.get(c) is not None]
-        if len(available) < 2:
-            return False, "Biomarcatori liquorali insufficienti: Step 3 non eseguibile"
-        return True, f"Biomarcatori CSF disponibili: {len(available)}/{len(csf_cols)}"
+        return True, f"CSF: {len(available)}/{len(csf_cols)} biomarcatori disponibili"
 
     return False, f"Step {step} non valido"
 
@@ -179,7 +177,7 @@ def run_full_pipeline(
     s2 = run_step(2, record, terapia_parsed, model,
                   step1_result=step1_result)
     results["step2"] = s2
-    step2_result = s2.get("result") if s2.get("feasible") else step1_result
+    step2_result = s2.get("result") or step1_result
 
     s3 = run_step(3, record, terapia_parsed, model,
                   step2_result=step2_result)

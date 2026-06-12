@@ -27,7 +27,9 @@ ISTRUZIONI GENERALI:
 - Se un dato è mancante, segnalalo nel ragionamento senza inventare valori
 - Rispondi ESCLUSIVAMENTE in formato JSON come specificato
 - Non includere testo fuori dal JSON nella risposta
-- IMPORTANTE: nel campo "diagnosis" usa SOLO il codice breve esatto dalla lista sopra (es. "VAD", "AD", "FTD", "PD"), NON il nome esteso del la malattia
+- IMPORTANTE: nel campo "diagnosis" usa SOLO il codice breve esatto dalla lista sopra (es. "VAD", "AD", "FTD", "PD"), NON il nome esteso della malattia
+- OBBLIGATORIO: in "differential_diagnoses" includi TUTTE le diagnosi possibili non scelte come primaria, ciascuna con confidence_score esplicito
+- I confidence_score di primary_diagnosis + tutti i differential_diagnoses devono sommare a circa 1.0
 """
 
 _JSON_SCHEMA_STEP1 = """
@@ -46,6 +48,7 @@ _JSON_SCHEMA_STEP1 = """
       "diagnosis": "<codice>",
       "label": "<etichetta>",
       "probability": "ALTA|MEDIA|BASSA|ESCLUSA",
+      "confidence_score": <0.0-1.0>,
       "reasoning": "<spiegazione>"
     }
   ],
@@ -91,6 +94,7 @@ _JSON_SCHEMA_STEP2 = """
       "diagnosis": "<codice>",
       "label": "<etichetta>",
       "probability": "ALTA|MEDIA|BASSA|ESCLUSA",
+      "confidence_score": <0.0-1.0>,
       "reasoning": "<ragionamento>"
     }
   ],
@@ -122,6 +126,7 @@ _JSON_SCHEMA_STEP3 = """
       "diagnosis": "<codice>",
       "label": "<etichetta>",
       "probability": "ALTA|MEDIA|BASSA|ESCLUSA",
+      "confidence_score": <0.0-1.0>,
       "reasoning": "<ragionamento>"
     }
   ],
@@ -235,6 +240,7 @@ eGFR: {fmt_val(patient.get('eGFR_2021'))} mL/min/1.73m² (normale: >60)
 ---
 Aggiorna la valutazione diagnostica incorporando i biomarcatori plasmatici.
 Verifica prima l'affidabilità dei biomarcatori sulla base della funzionalità epato-renale.
+Se tutti i biomarcatori plasmatici riportano MANCANTE, conferma la diagnosi dello Step 1 mantenendo le stesse probabilità e specifica nel reasoning che l'assenza di dati non permette aggiornamenti.
 Il codice paziente nel JSON deve essere: {patient.get('codice', 'N/D')}"""
 
     return system, user
@@ -277,6 +283,7 @@ CSF NfL: {fmt_val(patient.get('CSF_NfL'))} pg/mL (normale: <300)
 Integra i biomarcatori liquorali (gold standard diagnostico) nella valutazione.
 Classifica il profilo ATN (Amyloid/Tau/Neurodegeneration).
 Fornisci la diagnosi finale con il massimo grado di certezza possibile.
+Se tutti i biomarcatori CSF riportano MANCANTE, conferma la diagnosi dello Step 2 mantenendo le stesse probabilità e specifica nel reasoning che l'assenza di dati non permette aggiornamenti.
 Il codice paziente nel JSON deve essere: {patient.get('codice', 'N/D')}"""
 
     return system, user

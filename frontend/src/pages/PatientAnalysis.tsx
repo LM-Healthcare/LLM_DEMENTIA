@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ChevronRight, Search, User, Brain, FlaskConical, CheckCircle, XCircle, AlertTriangle, Loader2, BookOpen, FileText, ChevronDown, ChevronUp } from 'lucide-react'
+import { ChevronRight, Search, User, Brain, FlaskConical, CheckCircle, XCircle, AlertTriangle, Loader2, BookOpen, FileText, ChevronDown, ChevronUp, Play } from 'lucide-react'
 import { api } from '@/api/client'
 import type { PatientSummary, PatientDetail, StepResult, RagSource } from '@/types'
+import AlluvialDiagram from '@/components/AlluvialDiagram'
 
 const DOC_TYPE_LABEL: Record<string, string> = {
   continuum_review: 'Continuum Review',
@@ -128,6 +129,7 @@ function StepCard({
   step: number; label: string; color: string
   result: StepResult | null; loading: boolean
   onRun: () => void; disabled: boolean
+  dataNote?: string
 }) {
   const primary = result?.result?.primary_diagnosis
   const feasible = result?.feasible
@@ -152,6 +154,10 @@ function StepCard({
 
         {result === null && !loading && (
           <p className="text-xs text-slate-400 italic">In attesa di esecuzione...</p>
+        )}
+
+        {result !== null && result.skip_reason && (
+          <p className="text-xs text-slate-400 italic">{result.skip_reason}</p>
         )}
 
         {result !== null && !result.feasible && (
@@ -238,6 +244,7 @@ export default function PatientAnalysis() {
   const [step2, setStep2] = useState<StepResult | null>(null)
   const [step3, setStep3] = useState<StepResult | null>(null)
   const [loading, setLoading] = useState<Record<number, boolean>>({ 1: false, 2: false, 3: false })
+  const [pipelineRunning, setPipelineRunning] = useState(false)
 
   useEffect(() => {
     api.getPatients().then(setPatients)
@@ -275,6 +282,28 @@ export default function PatientAnalysis() {
       if (step === 3) setStep3(res)
     } finally {
       setLoading(l => ({ ...l, [step]: false }))
+    }
+  }
+
+  async function runPipeline() {
+    if (!selected || !model) return
+    setPipelineRunning(true)
+    setStep1(null); setStep2(null); setStep3(null)
+    try {
+      setLoading({ 1: true, 2: false, 3: false })
+      const r1 = await api.runStep({ patient_code: selected.codice, step: 1, model, step1_result: null, step2_result: null })
+      setStep1(r1)
+      setLoading({ 1: false, 2: true, 3: false })
+
+      const r2 = await api.runStep({ patient_code: selected.codice, step: 2, model, step1_result: r1.result ?? null, step2_result: null })
+      setStep2(r2)
+      setLoading({ 1: false, 2: false, 3: true })
+
+      const r3 = await api.runStep({ patient_code: selected.codice, step: 3, model, step1_result: r1.result ?? null, step2_result: r2.result ?? null })
+      setStep3(r3)
+    } finally {
+      setLoading({ 1: false, 2: false, 3: false })
+      setPipelineRunning(false)
     }
   }
 
@@ -359,6 +388,16 @@ export default function PatientAnalysis() {
                     {models.length === 0 && <option value="">Nessun modello</option>}
                     {models.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
+                  <button
+                    onClick={runPipeline}
+                    disabled={!model || pipelineRunning}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-navy-600 hover:bg-navy-700 transition-colors disabled:opacity-40"
+                  >
+                    {pipelineRunning
+                      ? <Loader2 className="w-3 h-3 animate-spin" />
+                      : <Play className="w-3 h-3" />}
+                    {pipelineRunning ? 'Analisi...' : 'Esegui Pipeline'}
+                  </button>
                 </div>
               </div>
 
@@ -390,19 +429,24 @@ export default function PatientAnalysis() {
               <StepCard step={1} label="Dati Clinici" color="#1565C0"
                 result={step1} loading={loading[1]}
                 onRun={() => runStep(1)}
-                disabled={!model}
+                disabled={!model || pipelineRunning}
               />
               <StepCard step={2} label="Biomarcatori Plasma" color="#6A1B9A"
                 result={step2} loading={loading[2]}
                 onRun={() => runStep(2)}
-                disabled={!model || !step1?.feasible}
+                disabled={!model || pipelineRunning || !step1}
               />
               <StepCard step={3} label="Liquor (CSF)" color="#2E7D32"
                 result={step3} loading={loading[3]}
                 onRun={() => runStep(3)}
-                disabled={!model || !step2?.feasible}
+                disabled={!model || pipelineRunning || !step2}
               />
             </div>
+
+            {/* Alluvial diagram — shown when all 3 steps have results */}
+            {step1 && step2 && step3 && (
+              <AlluvialDiagram step1={step1} step2={step2} step3={step3} />
+            )}
 
             {/* Raw data */}
             <details className="bg-white rounded-xl shadow-sm border border-border">
