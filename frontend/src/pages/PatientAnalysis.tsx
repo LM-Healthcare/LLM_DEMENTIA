@@ -123,6 +123,134 @@ function ProbBadge({ prob }: { prob: string }) {
   return <span className={PROB_BADGE[prob] ?? 'badge-esclusa'}>{prob}</span>
 }
 
+interface FieldDef {
+  name: string
+  value: number | string | boolean | null | undefined
+  display: string | null
+  ref?: string
+}
+
+function DataCompletenessTable({ patient }: { patient: PatientDetail }) {
+  const groups: Array<{ label: string; fields: FieldDef[] }> = [
+    {
+      label: 'Dati demografici',
+      fields: [
+        { name: 'Età', value: patient.age, display: patient.age != null ? `${patient.age} anni` : null },
+        { name: 'Sesso', value: patient.gender, display: patient.gender ?? null },
+        { name: 'Anni istruzione', value: patient.anni_edu, display: patient.anni_edu != null ? `${patient.anni_edu} anni` : null },
+        { name: 'MMSE', value: patient.mmse, display: patient.mmse != null ? `${patient.mmse}/30` : null },
+      ],
+    },
+    {
+      label: 'Dati clinici',
+      fields: [
+        { name: 'Anamnesi', value: patient.anamnesi, display: patient.anamnesi ? 'Presente' : null },
+        { name: 'EON', value: patient.eon, display: patient.eon ? 'Presente' : null },
+        { name: 'Terapia domiciliare', value: patient.terapia_raw, display: patient.terapia_raw ? 'Presente' : null },
+      ],
+    },
+    {
+      label: 'Fattori di rischio',
+      fields: [
+        { name: 'Familiarità demenza', value: patient.fam, display: patient.fam != null ? (patient.fam ? 'Sì' : 'No') : null },
+        { name: 'Fumo', value: patient.fumo, display: patient.fumo != null ? (patient.fumo ? 'Sì' : 'No') : null },
+        { name: 'Ipertensione', value: patient.ipertensione, display: patient.ipertensione != null ? (patient.ipertensione ? 'Sì' : 'No') : null },
+        { name: 'Malattia cardiovascolare', value: patient.cardiovascolare, display: patient.cardiovascolare != null ? (patient.cardiovascolare ? 'Sì' : 'No') : null },
+        { name: 'Diabete', value: patient.diabete, display: patient.diabete != null ? (patient.diabete ? 'Sì' : 'No') : null },
+        { name: 'Dislipidemia', value: patient.dislipidemia, display: patient.dislipidemia != null ? (patient.dislipidemia ? 'Sì' : 'No') : null },
+      ],
+    },
+    {
+      label: 'Biomarcatori plasma',
+      fields: [
+        { name: 'Aβ42/40 plasma', value: patient.plasma['Plasma_Ab4240'], display: patient.plasma['Plasma_Ab4240'] != null ? patient.plasma['Plasma_Ab4240']!.toFixed(4) : null, ref: '>0.0807' },
+        { name: 'p-tau217', value: patient.plasma['plasma_ptau217'], display: patient.plasma['plasma_ptau217'] != null ? `${patient.plasma['plasma_ptau217']!.toFixed(3)} pg/mL` : null, ref: '<0.21' },
+        { name: 'p-tau181', value: patient.plasma['plasma_pt181'], display: patient.plasma['plasma_pt181'] != null ? `${patient.plasma['plasma_pt181']!.toFixed(2)} pg/mL` : null, ref: '<1.8' },
+        { name: 'NfL plasma', value: patient.plasma['plasma_NfL'], display: patient.plasma['plasma_NfL'] != null ? `${patient.plasma['plasma_NfL']!.toFixed(1)} pg/mL` : null, ref: '<8.5' },
+      ],
+    },
+    {
+      label: 'Biomarcatori CSF (liquor)',
+      fields: [
+        { name: 'Aβ42', value: patient.csf['CSF_Ab42'], display: patient.csf['CSF_Ab42'] != null ? `${patient.csf['CSF_Ab42']!.toFixed(0)} pg/mL` : null, ref: '725–1777' },
+        { name: 'Aβ40', value: patient.csf['CSF_Ab40'], display: patient.csf['CSF_Ab40'] != null ? `${patient.csf['CSF_Ab40']!.toFixed(0)} pg/mL` : null },
+        { name: 'Aβ42/40 CSF', value: patient.csf['CSF_Ab4240'], display: patient.csf['CSF_Ab4240'] != null ? patient.csf['CSF_Ab4240']!.toFixed(4) : null, ref: '0.068–0.115' },
+        { name: 't-tau', value: patient.csf['CSF_ttau'], display: patient.csf['CSF_ttau'] != null ? `${patient.csf['CSF_ttau']!.toFixed(0)} pg/mL` : null, ref: '146–410' },
+        { name: 'p-tau CSF', value: patient.csf['CSF_ptau'], display: patient.csf['CSF_ptau'] != null ? `${patient.csf['CSF_ptau']!.toFixed(1)} pg/mL` : null, ref: '2.5–59' },
+        { name: 'NfL CSF', value: patient.csf['CSF_NfL'], display: patient.csf['CSF_NfL'] != null ? `${patient.csf['CSF_NfL']!.toFixed(0)} pg/mL` : null, ref: '<300' },
+      ],
+    },
+    {
+      label: 'Lab sicurezza (affidabilità biomarker)',
+      fields: [
+        { name: 'Creatinina', value: patient.safety_labs['Creatinina'], display: patient.safety_labs['Creatinina'] != null ? `${patient.safety_labs['Creatinina']!.toFixed(2)} mg/dL` : null, ref: '<1.1' },
+        { name: 'AST', value: patient.safety_labs['AST'], display: patient.safety_labs['AST'] != null ? `${patient.safety_labs['AST']!.toFixed(0)} U/L` : null, ref: '5–34' },
+        { name: 'ALT', value: patient.safety_labs['ALT'], display: patient.safety_labs['ALT'] != null ? `${patient.safety_labs['ALT']!.toFixed(0)} U/L` : null, ref: '0–55' },
+        { name: 'eGFR', value: patient.safety_labs['eGFR_2021'], display: patient.safety_labs['eGFR_2021'] != null ? `${patient.safety_labs['eGFR_2021']!.toFixed(0)} mL/min` : null, ref: '>60' },
+      ],
+    },
+  ]
+
+  const allFields = groups.flatMap(g => g.fields)
+  const totalMissing = allFields.filter(f => f.value == null).length
+  const totalFields = allFields.length
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-border overflow-hidden">
+      <div className="p-4 border-b border-border flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-slate-700">Completezza dati paziente</h3>
+        {totalMissing > 0 ? (
+          <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-200">
+            <AlertTriangle className="w-3.5 h-3.5" />
+            {totalMissing} / {totalFields} campi mancanti
+          </span>
+        ) : (
+          <span className="flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 px-2.5 py-1 rounded-full">
+            <CheckCircle className="w-3.5 h-3.5" />
+            Dati completi
+          </span>
+        )}
+      </div>
+
+      {groups.map(group => {
+        const missing = group.fields.filter(f => f.value == null).length
+        return (
+          <div key={group.label} className="border-b border-slate-100 last:border-0">
+            <div className="px-4 py-2 bg-slate-50 flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">{group.label}</span>
+              {missing > 0 && (
+                <span className="text-xs text-amber-600 font-semibold">{missing} mancant{missing === 1 ? 'e' : 'i'}</span>
+              )}
+            </div>
+            <table className="w-full text-xs">
+              <tbody>
+                {group.fields.map(field => (
+                  <tr key={field.name} className={field.value == null ? 'bg-red-50/60' : 'hover:bg-slate-50'}>
+                    <td className="px-4 py-1.5 text-slate-600 w-2/5">{field.name}</td>
+                    <td className="px-4 py-1.5 font-mono">
+                      {field.display != null
+                        ? <span className="text-slate-800">{field.display}</span>
+                        : <span className="text-red-600 font-semibold">MANCANTE</span>}
+                    </td>
+                    <td className="px-4 py-1.5 text-slate-400 w-1/5 text-right">
+                      {field.ref ? `rif. ${field.ref}` : ''}
+                    </td>
+                    <td className="px-3 py-1.5 text-right w-8">
+                      {field.value != null
+                        ? <CheckCircle className="w-3.5 h-3.5 text-green-500 inline" />
+                        : <AlertTriangle className="w-3.5 h-3.5 text-red-400 inline" />}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function StepCard({
   step, label, color, result, loading, onRun, disabled,
 }: {
@@ -458,6 +586,9 @@ export default function PatientAnalysis() {
                 <div><p className="font-bold text-slate-400 mb-1">ESAME OBIETTIVO NEUROLOGICO</p><p className="leading-relaxed">{selected.eon ?? 'N/D'}</p></div>
               </div>
             </details>
+
+            {/* Data completeness table */}
+            <DataCompletenessTable patient={selected} />
           </>
         )}
       </div>
