@@ -27,6 +27,7 @@ env/
 # PDF documents (troppo grandi per git)
 Continuum Demenze/
 Documenti_/
+Documenti_old/
 
 # Vector store (generato localmente)
 chroma_db/
