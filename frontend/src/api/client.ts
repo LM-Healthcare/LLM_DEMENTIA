@@ -50,6 +50,17 @@ export const api = {
 
   getBatchProgress: () => request<BatchProgress>('/analysis/batch/progress'),
 
+  saveIndividual: (payload: {
+    patient_code: string
+    model: string
+    step1?: object | null
+    step2?: object | null
+    step3?: object | null
+  }) => request<{ message: string; filename: string }>('/analysis/save-individual', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+
   // ── Models ─────────────────────────────────────────────────────────────
   getOllamaStatus: () => request<{ running: boolean }>('/models/status'),
   getModels: () => request<ModelInfo[]>('/models/'),

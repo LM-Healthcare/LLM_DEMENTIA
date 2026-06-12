@@ -7,7 +7,7 @@ import pandas as pd
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse
 
-from api.schemas import RunStepRequest, RunPipelineRequest, BatchRunRequest, StepResult
+from api.schemas import RunStepRequest, RunPipelineRequest, BatchRunRequest, StepResult, SaveIndividualRequest
 from api.state import get_app_state
 from config.settings import DATABASE_PATH
 from data.loader import load_database, get_patient_record, get_all_codes, get_ground_truth
@@ -124,3 +124,36 @@ async def _batch_task(codes: list[str], model: str, state):
 def batch_progress():
     state = get_app_state()
     return state.batch_progress or {"status": "idle"}
+
+
+@router.post("/save-individual")
+def save_individual(req: SaveIndividualRequest):
+    import json
+    from datetime import datetime
+    from pathlib import Path
+    from config.settings import RESULTS_DIR
+
+    record, _ = _get_record(req.patient_code)
+    gt = get_ground_truth(record)
+
+    out_dir = Path(RESULTS_DIR) / "individual"
+    out_dir.mkdir(exist_ok=True, parents=True)
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_safe = req.model.replace(":", "_").replace("/", "_")
+    filename = out_dir / f"{req.patient_code}_{model_safe}_{ts}.json"
+
+    data = {
+        "patient_code": req.patient_code,
+        "ground_truth": gt,
+        "model": req.model,
+        "timestamp": ts,
+        "step1": req.step1,
+        "step2": req.step2,
+        "step3": req.step3,
+    }
+
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+
+    return {"message": f"Risultati salvati", "filename": filename.name}

@@ -49,6 +49,14 @@ class BatchRunRequest(BaseModel):
     patient_codes: Optional[list[str]] = None
 
 
+class SaveIndividualRequest(BaseModel):
+    patient_code: str
+    model: str
+    step1: Optional[dict] = None
+    step2: Optional[dict] = None
+    step3: Optional[dict] = None
+
+
 class RagSource(BaseModel):
     index: int
     source: str

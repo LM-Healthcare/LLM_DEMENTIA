@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ChevronRight, Search, User, Brain, FlaskConical, CheckCircle, XCircle, AlertTriangle, Loader2, BookOpen, FileText, ChevronDown, ChevronUp, Play } from 'lucide-react'
+import { ChevronRight, Search, User, Brain, FlaskConical, CheckCircle, XCircle, AlertTriangle, Loader2, BookOpen, FileText, ChevronDown, ChevronUp, Play, Save } from 'lucide-react'
 import { api } from '@/api/client'
 import type { PatientSummary, PatientDetail, StepResult, RagSource } from '@/types'
 import AlluvialDiagram from '@/components/AlluvialDiagram'
@@ -373,6 +373,8 @@ export default function PatientAnalysis() {
   const [step3, setStep3] = useState<StepResult | null>(null)
   const [loading, setLoading] = useState<Record<number, boolean>>({ 1: false, 2: false, 3: false })
   const [pipelineRunning, setPipelineRunning] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
     api.getPatients().then(setPatients)
@@ -410,6 +412,29 @@ export default function PatientAnalysis() {
       if (step === 3) setStep3(res)
     } finally {
       setLoading(l => ({ ...l, [step]: false }))
+    }
+  }
+
+  async function saveResults() {
+    if (!selected || !model) return
+    setSaving(true)
+    setSaveMsg(null)
+    try {
+      const res = await api.saveIndividual({
+        patient_code: selected.codice,
+        model,
+        step1: step1 ?? null,
+        step2: step2 ?? null,
+        step3: step3 ?? null,
+      })
+      setSaveMsg({ ok: true, text: `Salvato: ${res.filename}` })
+      setTimeout(() => setSaveMsg(null), 4000)
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Errore salvataggio'
+      setSaveMsg({ ok: false, text: msg })
+      setTimeout(() => setSaveMsg(null), 5000)
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -526,8 +551,24 @@ export default function PatientAnalysis() {
                       : <Play className="w-3 h-3" />}
                     {pipelineRunning ? 'Analisi...' : 'Esegui Pipeline'}
                   </button>
+                  <button
+                    onClick={saveResults}
+                    disabled={saving || pipelineRunning || (!step1 && !step2 && !step3)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-green-600 hover:bg-green-700 transition-colors disabled:opacity-40"
+                    title="Salva i risultati dell'analisi corrente"
+                  >
+                    {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                    {saving ? 'Salvo...' : 'Salva'}
+                  </button>
                 </div>
               </div>
+
+              {saveMsg && (
+                <div className={`mt-2 flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${saveMsg.ok ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+                  {saveMsg.ok ? <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" /> : <XCircle className="w-3.5 h-3.5 flex-shrink-0" />}
+                  <span className="font-mono">{saveMsg.text}</span>
+                </div>
+              )}
 
               <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
                 <div>
