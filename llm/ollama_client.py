@@ -82,6 +82,7 @@ def generate(
         "system": system,
         "stream": False,
         "think": False,
+        "format": "json",
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,
@@ -138,6 +139,49 @@ def generate_stream(
         yield f"\n[Errore streaming: {e}]"
 
 
+def _try_repair_json(text: str) -> Optional[dict]:
+    """
+    Tenta di riparare JSON troncato aggiungendo le parentesi chiuse mancanti.
+    Utile quando modelli piccoli terminano la risposta prima della chiusura.
+    """
+    depth_brace = 0
+    depth_bracket = 0
+    in_string = False
+    escape_next = False
+
+    for ch in text:
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            depth_brace += 1
+        elif ch == '}':
+            depth_brace -= 1
+        elif ch == '[':
+            depth_bracket += 1
+        elif ch == ']':
+            depth_bracket -= 1
+
+    if depth_brace <= 0 and depth_bracket <= 0:
+        return None
+
+    repaired = text.rstrip().rstrip(',').rstrip()
+    repaired += ']' * max(0, depth_bracket)
+    repaired += '}' * max(0, depth_brace)
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError:
+        return None
+
+
 def _strip_think_tags(text: str) -> str:
     """Rimuove i blocchi <think>...</think> prodotti da Qwen3 e modelli simili."""
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
@@ -173,11 +217,18 @@ def parse_json_response(raw: str) -> dict:
         try:
             return json.loads(json_str)
         except json.JSONDecodeError:
-            pass
+            repaired = _try_repair_json(json_str)
+            if repaired:
+                print(f"[LLM] JSON riparato da troncamento ({len(json_str)} chars)")
+                return repaired
 
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
+        repaired = _try_repair_json(cleaned)
+        if repaired:
+            print(f"[LLM] JSON riparato da troncamento (full cleaned, {len(cleaned)} chars)")
+            return repaired
         print(f"[LLM] Impossibile parsare JSON. Lunghezza risposta: {len(raw)} chars")
         print(f"[LLM] Inizio (600 chars):\n{raw[:600]}")
         print(f"[LLM] Fine (300 chars):\n{raw[-300:]}" if len(raw) > 600 else "")

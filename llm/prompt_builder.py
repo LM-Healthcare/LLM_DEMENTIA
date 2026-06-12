@@ -209,15 +209,29 @@ def build_step2_prompt(
     system = _SYSTEM_BASE + f"\n\nSCHEMA JSON ATTESO (Step 2):\n{_JSON_SCHEMA_STEP2}"
 
     prev_diag = step1_result.get("primary_diagnosis", {})
+    prev_differentials = step1_result.get("differential_diagnoses", [])
     prev_summary = step1_result.get("clinical_summary", "Non disponibile")
 
     def fmt_val(v):
         return f"{v:.4f}" if isinstance(v, float) else (str(v) if v is not None else "MANCANTE")
 
-    user = f"""=== VALUTAZIONE STEP 1 (solo dati clinici) ===
-Diagnosi primaria precedente: {prev_diag.get('diagnosis', '?')} — {prev_diag.get('label', '?')}
-Probabilità: {prev_diag.get('probability', '?')}
-Sintesi: {prev_summary}
+    def fmt_diag_score(d: dict) -> str:
+        score = d.get('confidence_score')
+        score_str = f"{score:.2f}" if isinstance(score, float) else "?"
+        return f"  - {d.get('diagnosis','?')} ({d.get('label','?')}): {d.get('probability','?')} | score={score_str}"
+
+    all_diags_lines = [fmt_diag_score(prev_diag) + " [CORRENTE]"] + [fmt_diag_score(d) for d in prev_differentials]
+    all_diags_str = "\n".join(all_diags_lines)
+
+    user = f"""=== DISTRIBUZIONE DIAGNOSTICA DA STEP 1 (dati clinici) ===
+Tutte le diagnosi con probabilità assegnate:
+{all_diags_str}
+
+Sintesi clinica: {prev_summary}
+
+⚠ ISTRUZIONE CRITICA: I biomarcatori seguenti sono misure OGGETTIVE e più affidabili dell'impressione clinica.
+Se i biomarcatori contraddicono la diagnosi corrente, DEVI AGGIORNARE le probabilità in modo significativo.
+Non cercare di confermare la diagnosi precedente: rivaluta in modo INDIPENDENTE tutte le diagnosi sulla base dei nuovi dati.
 
 === DATI PAZIENTE ===
 Codice: {patient.get('codice', 'N/D')} | Età: {patient.get('age')} | Sesso: {patient.get('gender')}
@@ -257,15 +271,30 @@ def build_step3_prompt(
     system = _SYSTEM_BASE + f"\n\nSCHEMA JSON ATTESO (Step 3):\n{_JSON_SCHEMA_STEP3}"
 
     prev_diag = step2_result.get("primary_diagnosis", {})
+    prev_differentials = step2_result.get("differential_diagnoses", [])
     prev_summary = step2_result.get("clinical_summary", step2_result.get("final_clinical_summary", "Non disponibile"))
 
     def fmt_val(v):
         return f"{v:.2f}" if isinstance(v, float) else (str(v) if v is not None else "MANCANTE")
 
-    user = f"""=== VALUTAZIONE STEP 2 (clinica + biomarcatori plasma) ===
-Diagnosi primaria: {prev_diag.get('diagnosis', '?')} — {prev_diag.get('label', '?')}
-Probabilità: {prev_diag.get('probability', '?')} | Score: {prev_diag.get('confidence_score', '?')}
+    def fmt_diag_score(d: dict) -> str:
+        score = d.get('confidence_score')
+        score_str = f"{score:.2f}" if isinstance(score, float) else "?"
+        return f"  - {d.get('diagnosis','?')} ({d.get('label','?')}): {d.get('probability','?')} | score={score_str}"
+
+    all_diags_lines = [fmt_diag_score(prev_diag) + " [CORRENTE]"] + [fmt_diag_score(d) for d in prev_differentials]
+    all_diags_str = "\n".join(all_diags_lines)
+
+    user = f"""=== DISTRIBUZIONE DIAGNOSTICA DA STEP 2 (clinica + plasma) ===
+Tutte le diagnosi con probabilità assegnate:
+{all_diags_str}
+
 Sintesi: {prev_summary}
+
+⚠ ISTRUZIONE CRITICA: I biomarcatori liquorali (CSF) sono il GOLD STANDARD diagnostico per le demenze.
+Devono avere PESO PRIORITARIO rispetto a qualsiasi valutazione precedente.
+Se il profilo ATN contraddict la diagnosi corrente, DEVI CORREGGERLA con alta fiducia.
+Rivaluta TUTTE le diagnosi in modo indipendente: un profilo A+T+N+ esclude quasi certamente le diagnosi non-AD.
 
 === DATI PAZIENTE ===
 Codice: {patient.get('codice', 'N/D')} | Età: {patient.get('age')} | Sesso: {patient.get('gender')}

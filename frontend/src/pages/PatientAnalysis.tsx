@@ -391,7 +391,7 @@ export default function PatientAnalysis() {
                   <button
                     onClick={runPipeline}
                     disabled={!model || pipelineRunning}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-navy-600 hover:bg-navy-700 transition-colors disabled:opacity-40"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-navy-500 hover:bg-navy-700 transition-colors disabled:opacity-40"
                   >
                     {pipelineRunning
                       ? <Loader2 className="w-3 h-3 animate-spin" />
