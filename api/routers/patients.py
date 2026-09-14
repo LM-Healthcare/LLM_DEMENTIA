@@ -1,25 +1,13 @@
 from __future__ import annotations
-from functools import lru_cache
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException
 
 from api.schemas import PatientSummary, PatientDetail, DBStats
-from config.settings import DATABASE_PATH
-from data.loader import load_database, get_patient_record, summary_stats
+from data.loader import get_database as _get_db, get_patient_record, summary_stats
 from data.preprocessor import standardize_therapy
 
 router = APIRouter(prefix="/patients", tags=["patients"])
-
-
-@lru_cache(maxsize=1)
-def _get_db() -> pd.DataFrame:
-    return load_database(DATABASE_PATH)
-
-
-def _reload_db() -> pd.DataFrame:
-    _get_db.cache_clear()
-    return _get_db()
 
 
 @router.get("/", response_model=list[PatientSummary])

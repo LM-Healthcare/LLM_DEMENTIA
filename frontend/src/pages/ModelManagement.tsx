@@ -9,7 +9,7 @@ const SUGGESTED_MODELS = [
   { name: 'gemma2:9b',       desc: 'Google Gemma 2 9B — ottima comprensione',         size: '5.4 GB' },
   { name: 'mistral:7b',      desc: 'Mistral 7B — versatile',                          size: '4.1 GB' },
   { name: 'qwen2.5:7b',      desc: 'Alibaba Qwen 2.5 7B — buono in italiano',         size: '4.4 GB' },
-  { name: 'nomic-embed-text', desc: 'Nomic Embed — embeddings per RAG (obbligatorio)', size: '274 MB' },
+  { name: 'bge-m3', desc: 'BGE-M3 — embeddings multilingue per il RAG (obbligatorio)', size: '1.2 GB' },
 ]
 
 export default function ModelManagement() {

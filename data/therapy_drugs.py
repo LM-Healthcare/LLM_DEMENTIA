@@ -39,6 +39,7 @@ DRUG_MAPPING: dict[str, dict] = {
     "rosuvastatina":        {"molecule": "Rosuvastatina",      "class": "Statina (ipolipemizzante)",    "atc": "C10AA07"},
     "crestor":              {"molecule": "Rosuvastatina",      "class": "Statina (ipolipemizzante)",    "atc": "C10AA07"},
     "atorvastatina":        {"molecule": "Atorvastatina",      "class": "Statina (ipolipemizzante)",    "atc": "C10AA05"},
+    "atorvastatin":         {"molecule": "Atorvastatina",      "class": "Statina (ipolipemizzante)",    "atc": "C10AA05"},
     "torvast":              {"molecule": "Atorvastatina",      "class": "Statina (ipolipemizzante)",    "atc": "C10AA05"},
     "lipitor":              {"molecule": "Atorvastatina",      "class": "Statina (ipolipemizzante)",    "atc": "C10AA05"},
     "simvastatina":         {"molecule": "Simvastatina",       "class": "Statina (ipolipemizzante)",    "atc": "C10AA01"},
@@ -216,6 +217,8 @@ DRUG_MAPPING: dict[str, dict] = {
     # ─── ANSIOLITICI / IPNOTICI ──────────────────────────────────────────────
     "lorazepam":            {"molecule": "Lorazepam",          "class": "Benzodiazepina (ansiolitico)",  "atc": "N05BA06"},
     "tavor":                {"molecule": "Lorazepam",          "class": "Benzodiazepina (ansiolitico)",  "atc": "N05BA06"},
+    "delorazepam":          {"molecule": "Delorazepam",        "class": "Benzodiazepina (ansiolitico)",  "atc": "N05BA08"},
+    "en":                   {"molecule": "Delorazepam",        "class": "Benzodiazepina (ansiolitico)",  "atc": "N05BA08"},
     "diazepam":             {"molecule": "Diazepam",           "class": "Benzodiazepina (ansiolitico)",  "atc": "N05BA01"},
     "valium":               {"molecule": "Diazepam",           "class": "Benzodiazepina (ansiolitico)",  "atc": "N05BA01"},
     "alprazolam":           {"molecule": "Alprazolam",         "class": "Benzodiazepina (ansiolitico)",  "atc": "N05BA12"},

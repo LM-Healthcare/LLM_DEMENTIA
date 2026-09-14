@@ -24,12 +24,14 @@ env/
 *.csv
 *.epub
 
-# PDF documents (troppo grandi per git)
-Continuum Demenze/
+# Knowledge base RAG: PDF troppo grandi per git.
+# La KB attiva e' Documenti_/ (Budson & Solomon, A Practical Guide for Clinicians).
+# Documenti_old/ e "Continuum Demenze/" sono archivi non piu' indicizzati.
 Documenti_/
 Documenti_old/
+Continuum Demenze/
 
-# Vector store (generato localmente)
+# Vector store (generato localmente con scripts/build_rag.py)
 chroma_db/
 
 # Results (generati localmente)
@@ -37,6 +39,10 @@ results/*.json
 results/*.html
 results/*.csv
 results/*.pdf
+results/individual/
+
+# Liste di lavoro generate dagli script
+FARMACI_NON_IDENTIFICATI.txt
 
 # Frontend
 frontend/node_modules/

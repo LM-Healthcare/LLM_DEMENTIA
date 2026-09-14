@@ -6,6 +6,7 @@ gestisce i valori mancanti e produce record strutturati per la pipeline.
 from __future__ import annotations
 
 import pandas as pd
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -38,6 +39,24 @@ def load_database(path: str = DATABASE_PATH) -> pd.DataFrame:
     df = _normalize_diagnoses(df)
     df = _clean_columns(df)
     return df
+
+
+@lru_cache(maxsize=4)
+def _cached_database(path: str, mtime: float) -> pd.DataFrame:
+    return load_database(path)
+
+
+def get_database(path: str = DATABASE_PATH) -> pd.DataFrame:
+    """
+    Database in cache, invalidata automaticamente se il file Excel cambia.
+    Da usare in tutti i punti di accesso: la lettura dell'Excel costa ~1s e
+    veniva rifatta a ogni richiesta HTTP e a ogni paziente di un batch.
+    """
+    try:
+        mtime = Path(path).stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    return _cached_database(path, mtime)
 
 
 def _normalize_diagnoses(df: pd.DataFrame) -> pd.DataFrame:

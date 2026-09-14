@@ -9,7 +9,14 @@ import re
 import requests
 from typing import Optional, Generator
 
-from config.settings import OLLAMA_BASE_URL, OLLAMA_MODEL
+from config.settings import (
+    LLM_MAX_TOKENS,
+    LLM_NUM_CTX,
+    LLM_TEMPERATURE,
+    LLM_TIMEOUT_S,
+    OLLAMA_BASE_URL,
+    OLLAMA_MODEL,
+)
 
 
 def is_ollama_running() -> bool:
@@ -67,15 +74,13 @@ def generate(
     prompt: str,
     system: str = "",
     model: str = OLLAMA_MODEL,
-    temperature: float = 0.1,
-    max_tokens: int = 16384,
-    stream: bool = False,
+    temperature: float = LLM_TEMPERATURE,
+    max_tokens: int = LLM_MAX_TOKENS,
 ) -> str:
     """
     Genera testo tramite Ollama /api/generate.
-    temperature bassa (0.1) per risposta deterministica e clinicamente rigorosa.
+    temperature bassa per risposta deterministica e clinicamente rigorosa.
     """
-    url = f"{OLLAMA_BASE_URL}/api/generate"
     payload = {
         "model": model,
         "prompt": prompt,
@@ -86,28 +91,34 @@ def generate(
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,
-            "num_ctx": 32768,
+            "num_ctx": LLM_NUM_CTX,
             "top_p": 0.9,
             "repeat_penalty": 1.1,
         },
     }
     try:
-        response = requests.post(url, json=payload, timeout=300)
+        response = requests.post(
+            f"{OLLAMA_BASE_URL}/api/generate", json=payload, timeout=LLM_TIMEOUT_S
+        )
         response.raise_for_status()
-        data = response.json()
-        return data.get("response", "")
+        return response.json().get("response", "")
     except requests.Timeout:
-        return '{"error": "Timeout: il modello ha impiegato troppo tempo"}'
+        return _error_json(f"Timeout: nessuna risposta entro {LLM_TIMEOUT_S}s")
     except Exception as e:
-        return f'{{"error": "Errore Ollama: {str(e)}"}}'
+        return _error_json(f"Errore Ollama: {e}")
+
+
+def _error_json(message: str) -> str:
+    """Serializza l'errore con json.dumps: il messaggio può contenere virgolette."""
+    return json.dumps({"error": message}, ensure_ascii=False)
 
 
 def generate_stream(
     prompt: str,
     system: str = "",
     model: str = OLLAMA_MODEL,
-    temperature: float = 0.1,
-    max_tokens: int = 4096,
+    temperature: float = LLM_TEMPERATURE,
+    max_tokens: int = LLM_MAX_TOKENS,
 ) -> Generator[str, None, None]:
     """Genera testo in streaming (per UI real-time)."""
     url = f"{OLLAMA_BASE_URL}/api/generate"
@@ -139,47 +150,87 @@ def generate_stream(
         yield f"\n[Errore streaming: {e}]"
 
 
+# Quanti delimitatori arretrare al massimo cercando un punto di taglio valido.
+_REPAIR_BACKTRACK_LIMIT = 400
+
+
 def _try_repair_json(text: str) -> Optional[dict]:
     """
-    Tenta di riparare JSON troncato aggiungendo le parentesi chiuse mancanti.
-    Utile quando modelli piccoli terminano la risposta prima della chiusura.
+    Ripara un JSON troncato chiudendo stringa e parentesi rimaste aperte.
+
+    Serve quando un modello esaurisce il budget di token a metà risposta: senza
+    questo recupero l'intero step viene perso. I delimitatori vanno chiusi
+    nell'ordine inverso di apertura, quindi si traccia la pila e non due
+    semplici contatori (che sbagliano l'ordine sulle strutture annidate).
     """
-    depth_brace = 0
-    depth_bracket = 0
+    stack, in_string = _scan_delimiters(text)
+    if not in_string and not stack:
+        return None
+
+    # Primo tentativo: chiudere quello che è rimasto aperto così com'è.
+    candidate = _close_json(text)
+    if candidate is not None:
+        return candidate
+
+    # Il taglio può cadere su un frammento non recuperabile (una chiave senza
+    # valore, un numero a metà): si arretra al delimitatore precedente e si
+    # riprova, scartando l'ultimo elemento incompleto.
+    cut = len(text)
+    for _ in range(_REPAIR_BACKTRACK_LIMIT):
+        cut = max(text.rfind(",", 0, cut), text.rfind("}", 0, cut), text.rfind("]", 0, cut))
+        if cut <= 0:
+            break
+        candidate = _close_json(text[:cut])
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def _scan_delimiters(text: str) -> tuple[list[str], bool]:
+    """Pila dei delimitatori ancora aperti e se il testo termina dentro una stringa."""
+    stack: list[str] = []
     in_string = False
     escape_next = False
 
     for ch in text:
         if escape_next:
             escape_next = False
-            continue
-        if ch == "\\" and in_string:
-            escape_next = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch == '{':
-            depth_brace += 1
-        elif ch == '}':
-            depth_brace -= 1
-        elif ch == '[':
-            depth_bracket += 1
-        elif ch == ']':
-            depth_bracket -= 1
+        elif in_string:
+            if ch == "\\":
+                escape_next = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch in "}]" and stack:
+            stack.pop()
 
-    if depth_brace <= 0 and depth_bracket <= 0:
-        return None
+    return stack, in_string
 
-    repaired = text.rstrip().rstrip(',').rstrip()
-    repaired += ']' * max(0, depth_bracket)
-    repaired += '}' * max(0, depth_brace)
+
+def _close_json(text: str) -> Optional[dict]:
+    """
+    Chiude stringa e delimitatori aperti e prova a parsare.
+    I delimitatori vanno chiusi nell'ordine inverso di apertura: due semplici
+    contatori sbaglierebbero l'ordine sulle strutture annidate.
+    """
+    stack, in_string = _scan_delimiters(text)
+    repaired = text + ('"' if in_string else "")
+
+    # Una coppia chiave/valore lasciata a metà ("reasoning": ) non è recuperabile.
+    repaired = re.sub(r',?\s*"[^"]*"\s*:\s*$', "", repaired.rstrip())
+    repaired = repaired.rstrip().rstrip(",").rstrip()
+
+    for opener in reversed(stack):
+        repaired += "}" if opener == "{" else "]"
+
     try:
-        return json.loads(repaired)
+        result = json.loads(repaired)
     except json.JSONDecodeError:
         return None
+    return result if isinstance(result, dict) else None
 
 
 def _strip_think_tags(text: str) -> str:

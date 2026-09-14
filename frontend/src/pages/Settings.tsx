@@ -135,8 +135,9 @@ export default function Settings() {
         </div>
 
         <p className="text-xs text-slate-400 mt-3">
-          ⚠ L'inizializzazione richiede il modello <code className="bg-slate-100 px-1 rounded">nomic-embed-text</code> installato su Ollama.
-          Il processo viene eseguito in background e può richiedere qualche minuto.
+          ⚠ L'inizializzazione richiede il modello di embedding
+          <code className="bg-slate-100 px-1 rounded mx-1">{rag?.embedding_model || 'bge-m3'}</code>
+          installato su Ollama. Il processo viene eseguito in background e può richiedere qualche minuto.
         </p>
       </div>
 
@@ -150,10 +151,10 @@ export default function Settings() {
           {[
             ['OLLAMA_BASE_URL', 'http://localhost:11434'],
             ['OLLAMA_MODEL', 'configurato nel .env'],
-            ['OLLAMA_EMBED_MODEL', 'nomic-embed-text'],
+            ['OLLAMA_EMBED_MODEL', rag?.embedding_model || 'bge-m3'],
+            ['DOCS_FOLDER', './Documenti_'],
             ['CHROMA_DB_PATH', './chroma_db'],
-            ['RAG_TOP_K', '6'],
-            ['RAG_CHUNK_SIZE', '800 token'],
+            ['Passaggi indicizzati', `${rag?.parent_chunks ?? 0} parent / ${rag?.child_chunks ?? 0} child`],
           ].map(([k, v]) => (
             <div key={k} className="flex gap-3 py-1.5 px-3 bg-slate-50 rounded-lg">
               <span className="text-navy-600 font-semibold w-40 flex-shrink-0">{k}</span>

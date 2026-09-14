@@ -5,7 +5,9 @@ langchain-chroma==0.2.4
 langchain-ollama==0.3.3
 
 # Vector store
-chromadb>=1.0.9
+# Versione vincolata: un indice scritto da una minor più recente non è leggibile
+# dalle precedenti (i binding Rust vanno in panic sulle migrazioni sconosciute).
+chromadb>=1.5.9,<1.6
 
 # PDF processing
 pypdf==5.4.0

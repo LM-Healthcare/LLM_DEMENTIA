@@ -20,7 +20,9 @@ dependencies:
     - langchain-ollama==0.3.3
 
     # Vector store
-    - chromadb>=1.0.9
+    # Versione vincolata: un indice scritto da una minor più recente non è
+    # leggibile dalle precedenti (panic dei binding Rust sulle migrazioni).
+    - chromadb>=1.5.9,<1.6
 
     # PDF processing
     - pypdf==5.4.0

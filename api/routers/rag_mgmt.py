@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
+
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from api.schemas import RAGStatus
 from api.state import get_app_state
-from rag.document_processor import load_all_documents, create_parent_chunks, create_child_chunks, get_document_stats
+from config.settings import DOCS_FOLDER
+from rag.document_processor import load_all_documents, create_parent_chunks, create_child_chunks
+from rag.retriever import reset_lexical_index
 from rag.vector_store import build_vector_store, load_existing_store, get_store_stats
 
 router = APIRouter(prefix="/rag", tags=["rag"])
@@ -15,20 +19,20 @@ router = APIRouter(prefix="/rag", tags=["rag"])
 def rag_status():
     state = get_app_state()
     stats = get_store_stats()
-    docs_info = []
-    if state.rag_ready and state.child_store:
-        try:
-            from config.settings import DOCS_FOLDER_1, DOCS_FOLDER_2
-            from pathlib import Path
-            for folder in [DOCS_FOLDER_1, DOCS_FOLDER_2]:
-                for pdf in Path(folder).glob("*.pdf"):
-                    docs_info.append({"name": pdf.name, "folder": Path(folder).name, "size_kb": round(pdf.stat().st_size / 1024)})
-        except Exception:
-            pass
+    root = Path(DOCS_FOLDER)
+    docs_info = [
+        {
+            "name": pdf.name,
+            "folder": str(pdf.parent.relative_to(root)) or root.name,
+            "size_kb": round(pdf.stat().st_size / 1024),
+        }
+        for pdf in sorted(root.rglob("*.pdf"))
+    ] if root.exists() else []
     return RAGStatus(
         ready=state.rag_ready,
         parent_chunks=stats.get("parent_chunks", 0),
         child_chunks=stats.get("child_chunks", 0),
+        embedding_model=stats.get("embedding_model", ""),
         documents=docs_info,
     )
 
@@ -36,6 +40,8 @@ def rag_status():
 @router.post("/build")
 async def build_rag(background_tasks: BackgroundTasks, force: bool = False):
     state = get_app_state()
+    if state.rag_building:
+        raise HTTPException(409, "Un build del RAG è già in corso")
     if state.rag_ready and not force:
         return {"message": "RAG già inizializzato", "ready": True}
     background_tasks.add_task(_build_rag_task, state, force)
@@ -51,23 +57,30 @@ async def load_rag():
     state.parent_store = parent_store
     state.child_store = child_store
     state.rag_ready = True
-    stats = get_store_stats()
-    return {"message": "RAG caricato con successo", **stats}
+    reset_lexical_index()
+    return {"message": "RAG caricato con successo", **get_store_stats()}
+
+
+def _build_rag_sync(force: bool):
+    docs = load_all_documents()
+    parent_chunks = create_parent_chunks(docs)
+    child_chunks = create_child_chunks(parent_chunks)
+    return build_vector_store(parent_chunks, child_chunks, force_rebuild=force)
 
 
 async def _build_rag_task(state, force: bool):
+    state.rag_building = True
     try:
-        docs = await asyncio.get_event_loop().run_in_executor(None, load_all_documents)
-        parent_chunks = await asyncio.get_event_loop().run_in_executor(None, create_parent_chunks, docs)
-        child_chunks = await asyncio.get_event_loop().run_in_executor(None, create_child_chunks, parent_chunks)
         parent_store, child_store = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: build_vector_store(parent_chunks, child_chunks, force_rebuild=force)
+            None, _build_rag_sync, force
         )
+        reset_lexical_index()
         state.parent_store = parent_store
         state.child_store = child_store
         state.rag_ready = True
         print("[RAG] Build completato con successo")
-    except Exception as e:
-        print(f"[RAG] Errore durante il build: {e}")
+    except BaseException as e:
+        print(f"[RAG] Errore durante il build: {type(e).__name__}: {e}")
         state.rag_ready = False
+    finally:
+        state.rag_building = False

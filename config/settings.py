@@ -8,18 +8,49 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
-OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+OLLAMA_EMBED_MODEL: str = os.getenv("OLLAMA_EMBED_MODEL", "bge-m3")
 
 CHROMA_DB_PATH: str = os.getenv("CHROMA_DB_PATH", str(BASE_DIR / "chroma_db"))
-DOCS_FOLDER_1: str = os.getenv("DOCS_FOLDER_1", str(BASE_DIR / "Continuum Demenze"))
-DOCS_FOLDER_2: str = os.getenv("DOCS_FOLDER_2", str(BASE_DIR / "Documenti_"))
+
+# Knowledge base RAG: cartella unica, scansionata ricorsivamente.
+DOCS_FOLDER: str = os.getenv("DOCS_FOLDER", str(BASE_DIR / "Documenti_"))
 
 DATABASE_PATH: str = os.getenv("DATABASE_PATH", str(BASE_DIR / "Database_FINALE_codificato.xlsx"))
 REFERENCE_VALUES_PATH: str = os.getenv("REFERENCE_VALUES_PATH", str(BASE_DIR / "Valori di riferimento_lab.xlsx"))
 
-RAG_TOP_K: int = int(os.getenv("RAG_TOP_K", "6"))
-RAG_CHUNK_SIZE: int = int(os.getenv("RAG_CHUNK_SIZE", "800"))
-RAG_CHUNK_OVERLAP: int = int(os.getenv("RAG_CHUNK_OVERLAP", "150"))
+# ─── Parametri RAG ────────────────────────────────────────────────────────────
+# Strategia parent-child: i child (piccoli, precisi) servono al retrieval,
+# i parent (grandi) sono il contesto restituito al modello e citato per esteso.
+RAG_PARENT_CHUNK_SIZE: int = int(os.getenv("RAG_PARENT_CHUNK_SIZE", "2000"))
+RAG_PARENT_CHUNK_OVERLAP: int = int(os.getenv("RAG_PARENT_CHUNK_OVERLAP", "250"))
+RAG_CHILD_CHUNK_SIZE: int = int(os.getenv("RAG_CHILD_CHUNK_SIZE", "450"))
+RAG_CHILD_CHUNK_OVERLAP: int = int(os.getenv("RAG_CHILD_CHUNK_OVERLAP", "60"))
+
+# Lunghezza minima di un chunk: sotto questa soglia viene fuso con il vicino
+# invece di diventare una "fonte" a sé (evita le citazioni che sono solo titoli).
+RAG_MIN_CHUNK_CHARS: int = int(os.getenv("RAG_MIN_CHUNK_CHARS", "350"))
+
+RAG_TOP_K: int = int(os.getenv("RAG_TOP_K", "8"))
+RAG_CANDIDATES_PER_QUERY: int = int(os.getenv("RAG_CANDIDATES_PER_QUERY", "10"))
+# Peso del retrieval lessicale BM25 nella fusione con quello semantico (0-1).
+RAG_BM25_WEIGHT: float = float(os.getenv("RAG_BM25_WEIGHT", "0.4"))
+# Costante della Reciprocal Rank Fusion.
+RAG_RRF_K: int = int(os.getenv("RAG_RRF_K", "60"))
+# Massimo numero di fonti provenienti dalla stessa pagina (diversificazione).
+RAG_MAX_PER_PAGE: int = int(os.getenv("RAG_MAX_PER_PAGE", "2"))
+
+# Step in cui iniettare il contesto della knowledge base. Per impostazione
+# predefinita solo lo Step 1: gli step successivi si basano sui biomarcatori,
+# i cui valori di riferimento sono già nel system prompt.
+RAG_STEPS: frozenset[int] = frozenset(
+    int(s) for s in os.getenv("RAG_STEPS", "1").split(",") if s.strip()
+)
+
+# ─── Parametri di generazione LLM ─────────────────────────────────────────────
+LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
+LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "16384"))
+LLM_NUM_CTX: int = int(os.getenv("LLM_NUM_CTX", "32768"))
+LLM_TIMEOUT_S: int = int(os.getenv("LLM_TIMEOUT_S", "600"))
 
 RESULTS_DIR: Path = BASE_DIR / "results"
 RESULTS_DIR.mkdir(exist_ok=True)

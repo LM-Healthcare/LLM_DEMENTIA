@@ -2,27 +2,17 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ChevronRight, Search, User, Brain, FlaskConical, CheckCircle, XCircle, AlertTriangle, Loader2, BookOpen, FileText, ChevronDown, ChevronUp, Play, Save } from 'lucide-react'
 import { api } from '@/api/client'
-import type { PatientSummary, PatientDetail, StepResult, RagSource } from '@/types'
+import type { PatientSummary, PatientDetail, StepResult, RagSource, RagEvidence } from '@/types'
 import AlluvialDiagram from '@/components/AlluvialDiagram'
-
-const DOC_TYPE_LABEL: Record<string, string> = {
-  continuum_review: 'Continuum Review',
-  reference_document: 'Riferimento',
-  unknown: 'Documento',
-}
-
-const DOC_TYPE_COLOR: Record<string, string> = {
-  continuum_review: 'bg-blue-50 text-blue-700',
-  reference_document: 'bg-purple-50 text-purple-700',
-  unknown: 'bg-slate-100 text-slate-600',
-}
 
 function RagSourcesPanel({
   sources,
   usedIndices,
+  evidence = [],
 }: {
   sources: RagSource[]
   usedIndices: number[]
+  evidence?: RagEvidence[]
 }) {
   const [open, setOpen] = useState(false)
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
@@ -38,6 +28,7 @@ function RagSourcesPanel({
   }
 
   const usedSet = new Set(usedIndices)
+  const quoteByIndex = new Map(evidence.map(e => [e.source_index, e]))
 
   return (
     <div className="mt-3 border border-slate-200 rounded-lg overflow-hidden">
@@ -75,22 +66,29 @@ function RagSourcesPanel({
                     </span>
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-semibold text-slate-700 truncate max-w-[180px]" title={src.source}>
+                        <span className="font-semibold text-slate-700 truncate max-w-[200px]" title={src.source}>
                           {src.source.replace(/\.pdf$/i, '')}
                         </span>
-                        {src.page != null && (
+                        {src.page_ref && (
                           <span className="flex items-center gap-0.5 text-slate-400">
                             <FileText className="w-3 h-3" />
-                            p. {src.page}
+                            {src.page_ref}
                           </span>
                         )}
-                        <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${DOC_TYPE_COLOR[src.doc_type] ?? DOC_TYPE_COLOR.unknown}`}>
-                          {DOC_TYPE_LABEL[src.doc_type] ?? src.doc_type}
-                        </span>
+                        {src.retrieval_score != null && (
+                          <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 font-mono" title="Punteggio di rilevanza del retrieval">
+                            {src.retrieval_score.toFixed(3)}
+                          </span>
+                        )}
                         {isCited && (
                           <span className="px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-bold">✓ Citata</span>
                         )}
                       </div>
+                      {src.section && (
+                        <div className="mt-0.5 text-slate-500 truncate max-w-[280px]" title={src.section}>
+                          § {src.section}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <button
@@ -101,9 +99,34 @@ function RagSourcesPanel({
                   </button>
                 </div>
                 {isExpanded && (
-                  <div className="mt-2 ml-7 p-2 bg-slate-50 rounded text-slate-600 leading-relaxed border-l-2 border-slate-300">
-                    {src.snippet}
-                    {src.snippet.length >= 400 && <span className="text-slate-400 italic"> [...]</span>}
+                  <div className="mt-2 ml-7 space-y-2">
+                    {quoteByIndex.get(src.index)?.quote && (
+                      <div className="p-2 bg-green-50 rounded border-l-2 border-green-400">
+                        <div className="font-semibold text-green-800 mb-1">Citazione usata dal modello</div>
+                        <div className="text-slate-700 italic">"{quoteByIndex.get(src.index)!.quote}"</div>
+                        {quoteByIndex.get(src.index)!.relevance && (
+                          <div className="mt-1 text-green-700">
+                            → {quoteByIndex.get(src.index)!.relevance}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {src.matched_quotes.length > 0 && (
+                      <div className="p-2 bg-blue-50 rounded border-l-2 border-blue-300">
+                        <div className="font-semibold text-blue-800 mb-1">Passaggi che hanno prodotto il match</div>
+                        <ul className="space-y-1">
+                          {src.matched_quotes.map((q, i) => (
+                            <li key={i} className="text-slate-700">· {q}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    <div className="p-2 bg-slate-50 rounded text-slate-600 leading-relaxed border-l-2 border-slate-300">
+                      <div className="font-semibold text-slate-500 mb-1">
+                        Riferimento integrale — {src.source.replace(/\.pdf$/i, '')}, {src.page_ref}
+                      </div>
+                      <div className="whitespace-pre-wrap">{src.text}</div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -349,6 +372,7 @@ function StepCard({
               <RagSourcesPanel
                 sources={result.rag_sources}
                 usedIndices={result.result?.rag_sources_used ?? []}
+                evidence={result.result?.rag_evidence ?? []}
               />
             )}
 

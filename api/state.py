@@ -12,6 +12,7 @@ class AppState:
     parent_store: Optional[Any] = None
     child_store: Optional[Any] = None
     rag_ready: bool = False
+    rag_building: bool = False
     batch_running: bool = False
     batch_progress: dict = field(default_factory=dict)
     last_evaluation: Optional[dict] = None

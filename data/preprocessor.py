@@ -54,6 +54,36 @@ def _clean_token(token: str) -> str:
     return cleaned.strip()
 
 
+# Chiavi del dizionario ordinate dalla più lunga alla più corta: garantisce che
+# "acido acetilsalicilico" vinca su "asa" e che il match non dipenda
+# dall'ordine di inserimento nel dizionario.
+_DRUG_KEYS_BY_LENGTH = sorted(DRUG_MAPPING, key=len, reverse=True)
+
+
+def _match_drug(norm: str) -> Optional[dict]:
+    """
+    Cerca il farmaco nel dizionario con corrispondenza a confine di parola.
+
+    Il match per sottostringa nuda produceva falsi positivi (una chiave breve
+    come "asa" agganciava qualsiasi token che la contenesse) e falsi negativi
+    dipendenti dall'ordine del dizionario.
+    """
+    if not norm:
+        return None
+
+    if norm in DRUG_MAPPING:
+        return DRUG_MAPPING[norm]
+
+    tokens = set(re.findall(r"[a-z0-9]+", norm))
+    for key in _DRUG_KEYS_BY_LENGTH:
+        if " " in key:
+            if re.search(rf"\b{re.escape(key)}\b", norm):
+                return DRUG_MAPPING[key]
+        elif key in tokens:
+            return DRUG_MAPPING[key]
+    return None
+
+
 def standardize_therapy(raw_text: str) -> dict:
     """
     Prende il testo grezzo della colonna TERAPIA e restituisce:
@@ -103,11 +133,7 @@ def standardize_therapy(raw_text: str) -> dict:
         if not norm:
             continue
 
-        matched = None
-        for key, info in DRUG_MAPPING.items():
-            if key in norm or norm in key:
-                matched = info
-                break
+        matched = _match_drug(norm)
 
         if matched:
             entry = {

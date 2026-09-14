@@ -30,10 +30,25 @@ export interface RagSource {
   index: number
   source: string
   source_path: string
+  section: string
   page: number | null
-  doc_type: string
+  page_end: number | null
+  page_label: string
+  page_label_end: string
+  page_ref: string
+  doc_id: string
   chunk_id: string
-  snippet: string
+  retrieval_score: number | null
+  /** Estratti esatti che hanno prodotto il match nel retrieval. */
+  matched_quotes: string[]
+  /** Passaggio integrale citato, non troncato. */
+  text: string
+}
+
+export interface RagEvidence {
+  source_index: number
+  quote: string
+  relevance?: string
 }
 
 export interface StepResult {
@@ -46,6 +61,7 @@ export interface StepResult {
   duration_s: number
   model_used: string
   rag_sources: RagSource[]
+  prompt_chars?: number | null
 }
 
 export interface DiagnosisEntry {
@@ -66,7 +82,9 @@ export interface StepOutput {
   key_clinical_features?: string[]
   missing_information?: string[]
   rag_sources_used?: number[]
+  rag_evidence?: RagEvidence[]
   step1_limitations?: string
+  plasma_csf_concordance?: string
   biomarker_reliability?: {
     renal_function_ok: boolean
     hepatic_function_ok: boolean
@@ -107,6 +125,7 @@ export interface RAGStatus {
   ready: boolean
   parent_chunks: number
   child_chunks: number
+  embedding_model: string
   documents: Array<{ name: string; folder: string; size_kb: number }>
 }
 

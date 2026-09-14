@@ -1,50 +1,87 @@
 """
 Esecutore dei 3 step diagnostici per un singolo paziente.
 
-Flusso:
-  1. Carica i dati del paziente (step payload)
-  2. Verifica disponibilità biomarcatori
-  3. Esegue il retrieval RAG (step 1) o usa contesto minimo (step 2-3)
-  4. Costruisce il prompt appropriato
+Il flusso è cumulativo: ogni step riceve il quadro clinico completo, l'output
+integrale degli step precedenti e i dati di laboratorio specifici del proprio
+livello. Il contesto RAG è iniettato negli step elencati in RAG_STEPS.
+
+Flusso di uno step:
+  1. Verifica la fattibilità sui dati disponibili
+  2. Costruisce il payload del paziente (ground truth sempre esclusa)
+  3. Esegue il retrieval RAG se previsto per lo step
+  4. Costruisce il prompt
   5. Chiama Ollama e parsa la risposta JSON
-  6. Restituisce il risultato strutturato
 """
 
 from __future__ import annotations
 
-import json
 import time
 from typing import Optional
 
-from config.settings import OLLAMA_MODEL
-from data.loader import build_step_payload, STEP2_PLASMA_COLS, STEP3_CSF_COLS
+from config.settings import LLM_MAX_TOKENS, LLM_TEMPERATURE, OLLAMA_MODEL, RAG_STEPS
+from data.loader import build_step_payload
 from data.preprocessor import format_therapy_for_prompt
 from llm.ollama_client import generate, parse_json_response
 from llm.prompt_builder import build_step1_prompt, build_step2_prompt, build_step3_prompt
 from rag.retriever import retrieve_context, build_queries, format_context_for_prompt, extract_rag_sources
 
+PLASMA_BIOMARKERS = ["Plasma_Ab4240", "plasma_ptau217", "plasma_pt181", "plasma_NfL"]
+CSF_BIOMARKERS = ["CSF_Ab42", "CSF_Ab4240", "CSF_ttau", "CSF_ptau"]
+
+
+def _text(value) -> str:
+    """Coercizione sicura a stringa: le celle vuote di pandas sono float('nan')."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and value != value:  # NaN
+        return ""
+    return str(value).strip()
+
 
 def _check_step_feasibility(record: dict, step: int) -> tuple[bool, str]:
-    """Verifica se il paziente ha abbastanza dati per lo step.
-    Step 2 e 3 girano sempre; se i dati mancano il LLM mantiene le probabilità precedenti.
+    """
+    Verifica se il paziente ha abbastanza dati per lo step.
+    Step 2 e 3 girano sempre: se i biomarcatori mancano, il modello mantiene le
+    probabilità dello step precedente dichiarandolo nel ragionamento.
     """
     if step == 1:
-        has_anamnesi = bool(record.get("ANAMNESI", "").strip())
-        if not has_anamnesi:
+        if not _text(record.get("ANAMNESI")):
             return False, "Anamnesi mancante: Step 1 non eseguibile"
         return True, ""
 
     if step == 2:
-        plasma_cols = ["Plasma_Ab4240", "plasma_ptau217", "plasma_pt181", "plasma_NfL"]
-        available = [c for c in plasma_cols if record.get(c) is not None]
-        return True, f"Plasma: {len(available)}/{len(plasma_cols)} biomarcatori disponibili"
+        available = [c for c in PLASMA_BIOMARKERS if record.get(c) is not None]
+        return True, f"Plasma: {len(available)}/{len(PLASMA_BIOMARKERS)} biomarcatori disponibili"
 
     if step == 3:
-        csf_cols = ["CSF_Ab42", "CSF_Ab4240", "CSF_ttau", "CSF_ptau"]
-        available = [c for c in csf_cols if record.get(c) is not None]
-        return True, f"CSF: {len(available)}/{len(csf_cols)} biomarcatori disponibili"
+        available = [c for c in CSF_BIOMARKERS if record.get(c) is not None]
+        return True, f"CSF: {len(available)}/{len(CSF_BIOMARKERS)} biomarcatori disponibili"
 
     return False, f"Step {step} non valido"
+
+
+def _clinical_context(record: dict) -> str:
+    """
+    Quadro clinico in testo libero usato come query semantica sulla knowledge base.
+    Anamnesi ed EON insieme: l'esame obiettivo contiene i segni che discriminano
+    le diagnosi (parkinsonismo, segni focali, disinibizione).
+    """
+    parts = [_text(record.get("ANAMNESI")), _text(record.get("EON"))]
+    return "\n".join(p for p in parts if p)
+
+
+def _skipped(step: int, codice: str, reason: str, model: str) -> dict:
+    return {
+        "step": step,
+        "patient_code": codice,
+        "feasible": False,
+        "skip_reason": reason,
+        "result": None,
+        "raw_response": None,
+        "duration_s": 0.0,
+        "model_used": model,
+        "rag_sources": [],
+    }
 
 
 def run_step(
@@ -65,97 +102,76 @@ def run_step(
         record: riga del DataFrame come dict
         terapia_parsed: output di standardize_therapy()
         model: nome modello Ollama
-        parent_store: ChromaDB parent collection (obbligatorio per step 1)
-        child_store: ChromaDB child collection (obbligatorio per step 1)
-        step1_result: risultato step 1 (obbligatorio per step 2)
-        step2_result: risultato step 2 (obbligatorio per step 3)
+        parent_store/child_store: collezioni ChromaDB (necessarie per il RAG)
+        step1_result: risultato step 1 (richiesto dagli step 2 e 3)
+        step2_result: risultato step 2 (richiesto dallo step 3)
 
     Returns:
         dict con chiavi: step, patient_code, result, raw_response, duration_s,
-                         feasible, skip_reason, model_used
+                         feasible, skip_reason, model_used, rag_sources
     """
     t_start = time.time()
-    codice = record.get("Codice", "N/D")
+    codice = _text(record.get("Codice")) or "N/D"
 
     feasible, skip_reason = _check_step_feasibility(record, step)
     if not feasible:
-        return {
-            "step": step,
-            "patient_code": codice,
-            "feasible": False,
-            "skip_reason": skip_reason,
-            "result": None,
-            "raw_response": None,
-            "duration_s": 0.0,
-            "model_used": model,
-        }
+        return _skipped(step, codice, skip_reason, model)
+
+    if step == 2 and step1_result is None:
+        return _skipped(2, codice, "Risultato Step 1 mancante", model)
+    if step == 3 and step2_result is None:
+        return _skipped(3, codice, "Risultato Step 2 mancante", model)
+    if step not in (1, 2, 3):
+        return _skipped(step, codice, f"Step {step} non valido", model)
 
     payload = build_step_payload(record, step, terapia_parsed.get("summary"))
     terapia_fmt = format_therapy_for_prompt(terapia_parsed)
 
-    if step == 1:
-        anamnesi_snippet = str(record.get("ANAMNESI", ""))[:300]
-        queries = build_queries(1, clinical_context=anamnesi_snippet)
-        if child_store and parent_store:
-            docs = retrieve_context(child_store, parent_store, queries)
-            rag_context = format_context_for_prompt(docs)
-            rag_sources = extract_rag_sources(docs)
-        else:
-            rag_context = "Knowledge base non disponibile."
-            rag_sources = []
-        system_prompt, user_prompt = build_step1_prompt(payload, rag_context, terapia_fmt)
-
-    elif step == 2:
-        if step1_result is None:
-            return {
-                "step": 2, "patient_code": codice, "feasible": False,
-                "skip_reason": "Risultato Step 1 mancante",
-                "result": None, "raw_response": None,
-                "duration_s": 0.0, "model_used": model,
-            }
-        system_prompt, user_prompt = build_step2_prompt(payload, step1_result, terapia_fmt)
-
-    elif step == 3:
-        if step2_result is None:
-            return {
-                "step": 3, "patient_code": codice, "feasible": False,
-                "skip_reason": "Risultato Step 2 mancante",
-                "result": None, "raw_response": None,
-                "duration_s": 0.0, "model_used": model,
-            }
-        system_prompt, user_prompt = build_step3_prompt(payload, step2_result, terapia_fmt)
-
+    rag_sources: list[dict] = []
+    if step in RAG_STEPS:
+        rag_context, rag_sources = _retrieve(step, record, parent_store, child_store)
     else:
-        return {
-            "step": step, "patient_code": codice, "feasible": False,
-            "skip_reason": f"Step {step} non valido",
-            "result": None, "raw_response": None,
-            "duration_s": 0.0, "model_used": model,
-        }
+        rag_context = ""
+
+    if step == 1:
+        system_prompt, user_prompt = build_step1_prompt(payload, rag_context, terapia_fmt)
+    elif step == 2:
+        system_prompt, user_prompt = build_step2_prompt(payload, step1_result, terapia_fmt)
+    else:
+        system_prompt, user_prompt = build_step3_prompt(
+            payload, step2_result, terapia_fmt, step1_result=step1_result
+        )
 
     raw_response = generate(
         prompt=user_prompt,
         system=system_prompt,
         model=model,
-        temperature=0.1,
-        max_tokens=16384,
+        temperature=LLM_TEMPERATURE,
+        max_tokens=LLM_MAX_TOKENS,
     )
-
-    result = parse_json_response(raw_response)
-
-    duration = round(time.time() - t_start, 2)
 
     return {
         "step": step,
         "patient_code": codice,
         "feasible": True,
         "skip_reason": None,
-        "result": result,
+        "result": parse_json_response(raw_response),
         "raw_response": raw_response,
-        "duration_s": duration,
+        "duration_s": round(time.time() - t_start, 2),
         "model_used": model,
-        "rag_sources": rag_sources if step == 1 else [],
+        "rag_sources": rag_sources,
+        "prompt_chars": len(system_prompt) + len(user_prompt),
     }
+
+
+def _retrieve(step: int, record: dict, parent_store, child_store) -> tuple[str, list[dict]]:
+    """Recupera il contesto dalla knowledge base per lo step indicato."""
+    if not (child_store and parent_store):
+        return "Knowledge base non disponibile.", []
+
+    queries = build_queries(step, clinical_context=_clinical_context(record))
+    docs = retrieve_context(child_store, parent_store, queries)
+    return format_context_for_prompt(docs), extract_rag_sources(docs)
 
 
 def run_full_pipeline(
@@ -166,25 +182,23 @@ def run_full_pipeline(
     child_store=None,
 ) -> dict:
     """
-    Esegue l'intera pipeline (step 1→2→3) per un paziente.
+    Esegue l'intera pipeline (step 1→2→3) per un paziente, propagando a ogni
+    step l'output integrale di tutti quelli precedenti.
     """
-    results = {}
-
     s1 = run_step(1, record, terapia_parsed, model, parent_store, child_store)
-    results["step1"] = s1
     step1_result = s1.get("result") if s1.get("feasible") else None
 
-    s2 = run_step(2, record, terapia_parsed, model,
+    s2 = run_step(2, record, terapia_parsed, model, parent_store, child_store,
                   step1_result=step1_result)
-    results["step2"] = s2
-    step2_result = s2.get("result") or step1_result
+    step2_result = s2.get("result") if s2.get("feasible") else None
 
-    s3 = run_step(3, record, terapia_parsed, model,
-                  step2_result=step2_result)
-    results["step3"] = s3
+    s3 = run_step(3, record, terapia_parsed, model, parent_store, child_store,
+                  step1_result=step1_result,
+                  step2_result=step2_result or step1_result)
 
-    results["total_duration_s"] = round(
-        sum(r.get("duration_s", 0) for r in [s1, s2, s3]), 2
-    )
-
-    return results
+    return {
+        "step1": s1,
+        "step2": s2,
+        "step3": s3,
+        "total_duration_s": round(sum(r.get("duration_s", 0) for r in (s1, s2, s3)), 2),
+    }
