@@ -283,6 +283,7 @@ function StepCard({
   dataNote?: string
 }) {
   const primary = result?.result?.primary_diagnosis
+  const consistency = result?.result?.consistency
   const feasible = result?.feasible
   return (
     <div className={`bg-white rounded-xl border-t-4 shadow-sm`} style={{ borderTopColor: color }}>
@@ -327,6 +328,25 @@ function StepCard({
 
         {result?.feasible && primary && (
           <div className="space-y-3">
+            {consistency && consistency.warnings.length > 0 && (
+              <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs">
+                <div className="flex items-center gap-1.5 font-semibold text-amber-800 mb-1.5">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                  <span>Risposta internamente incoerente</span>
+                </div>
+                <ul className="space-y-1 text-amber-900">
+                  {consistency.warnings.map((w, i) => <li key={i}>· {w}</li>)}
+                </ul>
+                {!consistency.primary_is_argmax && consistency.argmax_diagnosis && (
+                  <p className="mt-2 pt-2 border-t border-amber-200 text-amber-800">
+                    Il punteggio più alto è di <b>{consistency.argmax_diagnosis}</b>, non della
+                    diagnosi indicata come primaria. La diagnosi non è stata modificata: viene
+                    riportata come prodotta dal modello.
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="bg-slate-50 rounded-lg p-3">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-semibold text-slate-500">Diagnosi primaria</span>
@@ -351,20 +371,45 @@ function StepCard({
               <div>
                 <p className="text-xs font-semibold text-slate-400 mb-1.5">Diagnosi differenziale</p>
                 <div className="space-y-1">
-                  {result.result.differential_diagnoses.map((d, i) => (
-                    <div key={i} className="flex items-center justify-between py-1 px-2 rounded bg-slate-50 text-xs">
-                      <span className="font-medium text-slate-600">{d.diagnosis}</span>
-                      <ProbBadge prob={d.probability} />
-                    </div>
-                  ))}
+                  {result.result.differential_diagnoses.map((d, i) => {
+                    const outranks = d.confidence_score != null
+                      && primary.confidence_score != null
+                      && d.confidence_score > primary.confidence_score
+                    return (
+                      <div key={i} className={`flex items-center justify-between py-1 px-2 rounded text-xs ${
+                        outranks ? 'bg-amber-50 ring-1 ring-amber-300' : 'bg-slate-50'
+                      }`}>
+                        <span className="font-medium text-slate-600">
+                          {d.diagnosis}
+                          {d.confidence_score != null && (
+                            <span className="ml-1.5 text-slate-400 font-normal">
+                              {d.confidence_score.toFixed(2)}
+                            </span>
+                          )}
+                        </span>
+                        <ProbBadge prob={d.probability} />
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
+            )}
+
+            {result.result?.diagnostic_reasoning && (
+              <details className="text-xs">
+                <summary className="cursor-pointer text-navy-600 font-medium hover:text-navy-800">
+                  Analisi differenziale
+                </summary>
+                <p className="mt-2 text-slate-600 leading-relaxed bg-slate-50 rounded p-2 whitespace-pre-wrap">
+                  {result.result.diagnostic_reasoning}
+                </p>
+              </details>
             )}
 
             {primary.reasoning && (
               <details className="text-xs">
                 <summary className="cursor-pointer text-navy-600 font-medium hover:text-navy-800">Ragionamento clinico</summary>
-                <p className="mt-2 text-slate-600 leading-relaxed bg-slate-50 rounded p-2">{primary.reasoning}</p>
+                <p className="mt-2 text-slate-600 leading-relaxed bg-slate-50 rounded p-2 whitespace-pre-wrap">{primary.reasoning}</p>
               </details>
             )}
 

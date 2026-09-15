@@ -24,6 +24,7 @@ Interprete diretto, se serve: `C:/Users/filow/miniconda3/envs/LLM_DEMENTIA/pytho
 | Build indice RAG | `python scripts/build_rag.py --force` |
 | Ispezione chunking (senza embedding) | `python scripts/build_rag.py --dry-run` |
 | Test retrieval | `python scripts/build_rag.py --probe` |
+| Test del validatore | `python scripts/test_validator.py` |
 | Verifica input dei prompt | `python scripts/verify_prompts.py` |
 | Audit fuga della diagnosi | `python scripts/audit_leakage.py` |
 | Cut-off vs foglio clinici | `python scripts/check_reference_values.py` |
@@ -37,17 +38,19 @@ Ollama deve essere in esecuzione (`ollama serve`). Modelli richiesti: `bge-m3`
 
 ## Verifica prima di considerare un lavoro concluso
 
-1. `python scripts/verify_prompts.py` — deve stampare "TUTTI I CONTROLLI SUPERATI".
+1. `python scripts/test_validator.py` — obbligatorio dopo ogni modifica a
+   `pipeline/validator.py` o allo schema JSON dei prompt.
+2. `python scripts/verify_prompts.py` — deve stampare "TUTTI I CONTROLLI SUPERATI".
    Controlla che ogni step riceva davvero anamnesi, EON, MMSE, terapia, fattori
    di rischio, biomarcatori del proprio livello e output integrale degli step
    precedenti.
-2. `python scripts/audit_leakage.py` — deve stampare "nessuna fuga strutturale o
+3. `python scripts/audit_leakage.py` — deve stampare "nessuna fuga strutturale o
    letterale". Obbligatorio dopo ogni modifica a `prompt_builder.py`,
    `build_step_payload` o `step_runner.py`.
-3. `python -m pyflakes api config data llm pipeline rag scripts run.py` — nessun
+4. `python -m pyflakes api config data llm pipeline rag scripts run.py` — nessun
    output atteso.
-4. `cd frontend && npm run build` — il typecheck TypeScript è parte del build.
-5. Se sono stati toccati `rag/` o i parametri di chunking:
+5. `cd frontend && npm run build` — il typecheck TypeScript è parte del build.
+6. Se sono stati toccati `rag/` o i parametri di chunking:
    `python scripts/build_rag.py --dry-run` e controllare che nessun parent chunk
    sia sotto `RAG_MIN_CHUNK_CHARS`.
 
@@ -69,6 +72,18 @@ Ollama deve essere in esecuzione (`ollama serve`). Modelli richiesti: `bge-m3`
 - **Le celle vuote dell'Excel sono `float('nan')`, non `""`.** `record.get(k, "")`
   non protegge se la chiave esiste: usare la coercizione `_text()` di
   `pipeline/step_runner.py`.
+- **Nello schema JSON dei prompt il ragionamento precede sempre il verdetto.**
+  La generazione è autoregressiva: se `diagnosis` viene prima di `reasoning`, il
+  modello sceglie l'etichetta prima di ragionare e poi si contraddice nel testo.
+  L'ordine corretto è `diagnostic_reasoning` → `primary_diagnosis` (con
+  `reasoning` come primo campo interno) → `differential_diagnoses`, e le liste
+  lunghe (`rag_evidence`) vanno in fondo, perché i modelli piccoli a volte
+  chiudono il JSON in anticipo e i campi finali si perdono.
+- **Il validatore non corregge la diagnosi, la segnala.** Sovrascrivere la scelta
+  del modello con l'argmax falsificherebbe il dato che lo studio misura. Le
+  normalizzazioni ammesse sono solo sintattiche (codici, etichette, tipi,
+  espansione di "FTD|PD"); le incoerenze di merito finiscono in
+  `result.consistency.warnings` e vengono mostrate nell'interfaccia.
 - **I cut-off dei biomarcatori si dichiarano solo in `REFERENCE_VALUES`**
   (`config/settings.py`). Da lì si generano il blocco del system prompt e le
   annotazioni `(normale: ...)` nei prompt: non reintrodurre valori hardcoded in

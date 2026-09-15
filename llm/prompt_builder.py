@@ -44,36 +44,62 @@ ISTRUZIONI GENERALI:
 - Non includere testo fuori dal JSON nella risposta
 - IMPORTANTE: nel campo "diagnosis" usa SOLO il codice breve esatto dalla lista sopra (es. "VAD", "AD", "FTD", "PD"), NON il nome esteso della malattia
 - OBBLIGATORIO: in "differential_diagnoses" includi TUTTE le diagnosi possibili non scelte come primaria, ciascuna con confidence_score esplicito
-- I confidence_score di primary_diagnosis + tutti i differential_diagnoses devono sommare a circa 1.0
+
+ORDINE DI RAGIONAMENTO (vincolante):
+- Compila i campi NELL'ORDINE in cui appaiono nello schema. Il campo
+  "diagnostic_reasoning" viene PRIMA di qualsiasi verdetto: usalo per svolgere per
+  intero l'analisi differenziale, confrontando le ipotesi tra loro.
+- Scegli il codice di "primary_diagnosis" SOLO DOPO aver completato quell'analisi,
+  e deve essere la conclusione a cui l'analisi è arrivata.
+- Dentro ogni oggetto diagnosi il campo "reasoning" precede "diagnosis": motiva
+  prima, etichetta dopo.
+
+COERENZA NUMERICA (vincolante):
+- I confidence_score di primary_diagnosis + tutti i differential_diagnoses devono
+  sommare esattamente a 1.0.
+- primary_diagnosis DEVE essere la diagnosi con il confidence_score più alto: se
+  una differenziale ha un punteggio superiore, allora è quella la primaria.
+- Una diagnosi con probability "ESCLUSA" deve avere confidence_score 0.0.
+- I livelli di probabilità devono rispettare il punteggio: ALTA ≥ 0.5,
+  MEDIA 0.2-0.5, BASSA 0.01-0.2, ESCLUSA = 0.0.
+- Non ripetere la diagnosi primaria dentro "differential_diagnoses".
+
+COMPLETEZZA (vincolante):
+- Il JSON deve contenere TUTTI i campi dello schema. Non chiudere l'oggetto prima
+  di aver compilato "primary_diagnosis" e "differential_diagnoses": sono i campi
+  essenziali e la risposta senza di essi è inutilizzabile.
+- Tieni "diagnostic_reasoning" entro il limite indicato: un testo troppo lungo
+  rischia di far terminare la risposta prima dei campi obbligatori.
 """
 
 _JSON_SCHEMA_STEP1 = """
 {
   "step": 1,
   "patient_code": "<codice>",
+  "key_clinical_features": ["<feature 1>", "<feature 2>"],
+  "diagnostic_reasoning": "<analisi differenziale in massimo 8 frasi: confronta le ipotesi tra loro PRIMA di scegliere. Chiudi indicando quale diagnosi risulta la più probabile>",
   "primary_diagnosis": {
-    "diagnosis": "<codice esatto dalla lista: AD|VAD|SCD|PD|FTD|Mixed|LATE|AD-PPA>",
+    "reasoning": "<sintesi che giustifica la scelta, coerente con diagnostic_reasoning>",
+    "diagnosis": "<codice esatto dalla lista: AD|VAD|SCD|PD|FTD|MIXED|LATE|AD-PPA>",
     "label": "<etichetta>",
     "probability": "ALTA|MEDIA|BASSA",
-    "confidence_score": <0.0-1.0>,
-    "reasoning": "<spiegazione clinica dettagliata>"
+    "confidence_score": <0.0-1.0>
   },
   "differential_diagnoses": [
     {
+      "reasoning": "<perché questa ipotesi è meno probabile della primaria>",
       "diagnosis": "<codice>",
       "label": "<etichetta>",
       "probability": "ALTA|MEDIA|BASSA|ESCLUSA",
-      "confidence_score": <0.0-1.0>,
-      "reasoning": "<spiegazione>"
+      "confidence_score": <0.0-1.0>
     }
   ],
-  "key_clinical_features": ["<feature 1>", "<feature 2>"],
+  "clinical_summary": "<riassunto clinico in 2-3 frasi>",
   "missing_information": ["<info mancante 1>"],
   "rag_sources_used": [1, 3],
   "rag_evidence": [
     {"source_index": 1, "quote": "<citazione testuale dalla fonte>", "relevance": "<come sostiene il ragionamento>"}
   ],
-  "clinical_summary": "<riassunto clinico in 2-3 frasi>",
   "step1_limitations": "<limitazioni della valutazione basata solo su dati clinici>"
 }"""
 
@@ -105,20 +131,21 @@ _JSON_SCHEMA_STEP2 = """
     "plasma_pt181": {"value": <valore|null>, "status": "NORMALE|PATOLOGICO|MANCANTE", "interpretation": "<note>"},
     "plasma_NfL": {"value": <valore|null>, "status": "NORMALE|PATOLOGICO|MANCANTE", "interpretation": "<note>"}
   },
+  "diagnostic_reasoning": "<analisi differenziale aggiornata in massimo 8 frasi: come i biomarcatori plasmatici modificano ciascuna ipotesi, PRIMA di scegliere la primaria. Chiudi indicando la diagnosi più probabile>",
   "primary_diagnosis": {
+    "reasoning": "<sintesi che giustifica la scelta, coerente con diagnostic_reasoning>",
     "diagnosis": "<codice>",
     "label": "<etichetta>",
     "probability": "ALTA|MEDIA|BASSA",
-    "confidence_score": <0.0-1.0>,
-    "reasoning": "<ragionamento aggiornato con i biomarcatori>"
+    "confidence_score": <0.0-1.0>
   },
   "differential_diagnoses": [
     {
+      "reasoning": "<perché questa ipotesi è meno probabile della primaria>",
       "diagnosis": "<codice>",
       "label": "<etichetta>",
       "probability": "ALTA|MEDIA|BASSA|ESCLUSA",
-      "confidence_score": <0.0-1.0>,
-      "reasoning": "<ragionamento>"
+      "confidence_score": <0.0-1.0>
     }
   ],
   "update_from_step1": "<come i biomarcatori hanno modificato la valutazione precedente>",
@@ -144,20 +171,21 @@ _JSON_SCHEMA_STEP3 = """
   },
   "at_profile": "<A+T+N+ | A+T-N+ | A-T-N+ | ... (classificazione ATN)>",
   "plasma_csf_concordance": "<concordanza o discordanza tra plasma e liquor, con interpretazione>",
+  "diagnostic_reasoning": "<analisi differenziale finale in massimo 8 frasi: come il profilo ATN modifica ciascuna ipotesi, PRIMA di scegliere la primaria. Chiudi indicando la diagnosi più probabile>",
   "primary_diagnosis": {
+    "reasoning": "<sintesi che giustifica la scelta, coerente con diagnostic_reasoning>",
     "diagnosis": "<codice>",
     "label": "<etichetta>",
     "probability": "ALTA|MEDIA|BASSA",
-    "confidence_score": <0.0-1.0>,
-    "reasoning": "<ragionamento finale con tutti i dati>"
+    "confidence_score": <0.0-1.0>
   },
   "differential_diagnoses": [
     {
+      "reasoning": "<perché questa ipotesi è meno probabile della primaria>",
       "diagnosis": "<codice>",
       "label": "<etichetta>",
       "probability": "ALTA|MEDIA|BASSA|ESCLUSA",
-      "confidence_score": <0.0-1.0>,
-      "reasoning": "<ragionamento>"
+      "confidence_score": <0.0-1.0>
     }
   ],
   "final_clinical_summary": "<sintesi diagnostica completa>",

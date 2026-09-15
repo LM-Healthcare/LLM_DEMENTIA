@@ -18,11 +18,18 @@ from __future__ import annotations
 import time
 from typing import Optional
 
-from config.settings import LLM_MAX_TOKENS, LLM_TEMPERATURE, OLLAMA_MODEL, RAG_STEPS
+from config.settings import (
+    LLM_MAX_TOKENS,
+    LLM_RETRIES_ON_INVALID,
+    LLM_TEMPERATURE,
+    OLLAMA_MODEL,
+    RAG_STEPS,
+)
 from data.loader import CSF_CORE_BIOMARKER_COLS, PLASMA_BIOMARKER_COLS, build_step_payload
 from data.preprocessor import format_therapy_for_prompt
 from llm.ollama_client import generate, parse_json_response
 from llm.prompt_builder import build_step1_prompt, build_step2_prompt, build_step3_prompt
+from pipeline.validator import validate_step_result
 from rag.retriever import retrieve_context, build_queries, format_context_for_prompt, extract_rag_sources
 
 
@@ -162,26 +169,61 @@ def run_step(
             payload, step2_result, terapia_fmt, step1_result=step1_result
         )
 
-    raw_response = generate(
-        prompt=user_prompt,
-        system=system_prompt,
-        model=model,
-        temperature=LLM_TEMPERATURE,
-        max_tokens=LLM_MAX_TOKENS,
-    )
+    raw_response, result = _generate_validated(system_prompt, user_prompt, model, step, codice)
+    for warning in (result or {}).get("consistency", {}).get("warnings", []):
+        print(f"[Step {step}/{codice}] {warning}")
 
     return {
         "step": step,
         "patient_code": codice,
         "feasible": True,
         "skip_reason": None,
-        "result": parse_json_response(raw_response),
+        "result": result,
         "raw_response": raw_response,
         "duration_s": round(time.time() - t_start, 2),
         "model_used": model,
         "rag_sources": rag_sources,
         "prompt_chars": len(system_prompt) + len(user_prompt),
     }
+
+
+def _is_structurally_valid(result: dict | None) -> bool:
+    """Una risposta è utilizzabile solo se contiene la diagnosi primaria."""
+    if not isinstance(result, dict) or "error" in result:
+        return False
+    return bool((result.get("primary_diagnosis") or {}).get("diagnosis"))
+
+
+def _generate_validated(
+    system_prompt: str, user_prompt: str, model: str, step: int, codice: str
+) -> tuple[str, dict]:
+    """
+    Chiama il modello e valida l'output, ritentando una volta se la risposta è
+    inutilizzabile.
+
+    I modelli piccoli a volte chiudono il JSON prima dei campi obbligatori: un
+    singolo nuovo tentativo recupera il paziente invece di perderlo, e costa meno
+    di rieseguire l'intera pipeline.
+    """
+    attempts = 1 + max(0, LLM_RETRIES_ON_INVALID)
+    raw_response, result = "", {}
+
+    for attempt in range(1, attempts + 1):
+        raw_response = generate(
+            prompt=user_prompt,
+            system=system_prompt,
+            model=model,
+            temperature=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_TOKENS,
+        )
+        result = validate_step_result(parse_json_response(raw_response))
+        if _is_structurally_valid(result):
+            return raw_response, result
+        if attempt < attempts:
+            print(f"[Step {step}/{codice}] risposta priva di diagnosi primaria, "
+                  f"nuovo tentativo ({attempt + 1}/{attempts})")
+
+    return raw_response, result
 
 
 def _retrieve(step: int, record: dict, parent_store, child_store) -> tuple[str, list[dict]]:

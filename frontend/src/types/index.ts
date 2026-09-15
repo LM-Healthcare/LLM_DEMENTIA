@@ -72,9 +72,19 @@ export interface DiagnosisEntry {
   reasoning: string
 }
 
+export interface ConsistencyReport {
+  warnings: string[]
+  score_sum: number
+  argmax_diagnosis: string
+  primary_is_argmax: boolean
+  normalized_scores: Record<string, number>
+}
+
 export interface StepOutput {
   step: number
   patient_code: string
+  diagnostic_reasoning?: string
+  consistency?: ConsistencyReport
   primary_diagnosis: DiagnosisEntry
   differential_diagnoses: DiagnosisEntry[]
   clinical_summary?: string

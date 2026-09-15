@@ -17,17 +17,28 @@ from pathlib import Path
 from typing import Optional
 
 from config.settings import RESULTS_DIR
+from pipeline.validator import canonical_code
 
 
 def extract_llm_diagnosis(step_result: dict) -> Optional[str]:
-    """Estrae il codice diagnosi dal risultato di uno step."""
+    """Estrae il codice diagnosi dal risultato di uno step, in forma canonica."""
     if step_result is None or not step_result.get("feasible"):
         return None
     result = step_result.get("result")
     if not result or "error" in result:
         return None
-    primary = result.get("primary_diagnosis", {})
-    return primary.get("diagnosis", None)
+    code = canonical_code((result.get("primary_diagnosis") or {}).get("diagnosis"))
+    return code or None
+
+
+def extract_consistency(step_result: dict) -> dict:
+    """Blocco di coerenza prodotto dal validatore, vuoto se assente."""
+    if not step_result:
+        return {}
+    result = step_result.get("result")
+    if not isinstance(result, dict):
+        return {}
+    return result.get("consistency") or {}
 
 
 def extract_confidence(step_result: dict) -> Optional[float]:
@@ -43,7 +54,7 @@ def concordance_record(llm_diagnosis: Optional[str], ground_truth: str) -> Optio
     """True se la diagnosi LLM coincide col ground truth, None se non processabile."""
     if llm_diagnosis is None:
         return None
-    return str(llm_diagnosis).strip().upper() == str(ground_truth).strip().upper()
+    return canonical_code(llm_diagnosis).upper() == canonical_code(ground_truth).upper()
 
 
 def evaluate_batch(
@@ -85,15 +96,18 @@ def evaluate_batch(
             concord = concordance_record(llm_diag, gt)
             feasible = sr.get("feasible", False)
 
+            consistency = extract_consistency(sr)
             record[f"step{step}_prediction"] = llm_diag
             record[f"step{step}_confidence"] = conf
             record[f"step{step}_concordant"] = concord
             record[f"step{step}_feasible"] = feasible
             record[f"step{step}_duration_s"] = sr.get("duration_s", 0)
+            record[f"step{step}_consistency_warnings"] = consistency.get("warnings", [])
+            record[f"step{step}_primary_is_argmax"] = consistency.get("primary_is_argmax")
 
             if feasible and llm_diag is not None:
                 step_preds[step].append(llm_diag.upper())
-                step_truths[step].append(gt.upper())
+                step_truths[step].append(canonical_code(gt).upper())
 
         records.append(record)
 
@@ -177,6 +191,14 @@ def _build_summary(records: list[dict], metrics: dict) -> dict:
             "concordant_patients": concordant,
             "accuracy": m.get("accuracy", 0),
             "cohen_kappa": m.get("cohen_kappa", 0),
+            # Quante risposte erano internamente contraddittorie: un'accuracy
+            # calcolata su output incoerenti va interpretata con cautela.
+            "inconsistent_outputs": sum(
+                1 for r in records if r.get(f"{key}_primary_is_argmax") is False
+            ),
+            "patients_with_warnings": sum(
+                1 for r in records if r.get(f"{key}_consistency_warnings")
+            ),
         }
 
     return summary

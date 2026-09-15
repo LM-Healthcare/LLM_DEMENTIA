@@ -77,6 +77,7 @@ hanno prodotto il match.
 ## Verifica
 
 ```bash
+python scripts/test_validator.py                      # coerenza dell'output diagnostico
 python scripts/verify_prompts.py                      # ogni step riceve tutti gli input previsti
 python scripts/audit_leakage.py                       # la diagnosi non raggiunge il modello
 python scripts/check_reference_values.py              # cut-off allineati al foglio dei clinici
@@ -125,8 +126,9 @@ un exit code diverso da zero in caso di problema, quindi sono utilizzabili in CI
 │   ├── ollama_client.py    # Client HTTP Ollama
 │   └── prompt_builder.py   # Template prompt per 3 step
 ├── pipeline/
-│   ├── step_runner.py      # Esecutore pipeline 3-step
-│   └── evaluator.py        # Metriche concordanza
+│   ├── step_runner.py      # esecutore pipeline 3-step
+│   ├── validator.py        # normalizzazione e coerenza dell'output diagnostico
+│   └── evaluator.py        # metriche di concordanza
 ├── rag/
 │   ├── document_processor.py  # ingestion PDF: normalizzazione + chunking
 │   ├── vector_store.py        # gestione ChromaDB
@@ -134,7 +136,9 @@ un exit code diverso da zero in caso di problema, quindi sono utilizzabili in CI
 ├── scripts/
 │   ├── build_rag.py           # build/ispezione indice RAG
 │   ├── verify_prompts.py      # verifica completezza input dei prompt
+│   ├── test_validator.py      # test di regressione del validatore
 │   ├── audit_leakage.py       # audit: la diagnosi non raggiunge il modello
+│   ├── check_reference_values.py  # cut-off vs foglio dei clinici
 │   ├── smoke_pipeline.py      # test end-to-end della pipeline
 │   └── extract_unidentified_drugs.py  # lista farmaci da mappare
 ├── Documenti_/             # knowledge base PDF (gitignored)
@@ -196,6 +200,30 @@ valutazione precedente dichiarando che l'assenza di dati non permette
 aggiornamenti. Ogni step riceve istruzioni esplicite contro l'ancoraggio alla
 diagnosi precedente, perché il ragionamento pregresso gli è fornito come storia
 del percorso diagnostico, non come conclusione da difendere.
+
+### Ordine di ragionamento e coerenza dell'output
+
+Lo schema JSON impone al modello di **ragionare prima di etichettare**: il campo
+`diagnostic_reasoning` precede `primary_diagnosis`, e dentro ogni oggetto
+diagnosi `reasoning` precede `diagnosis`. La generazione è autoregressiva: con
+l'ordine opposto il modello sceglie la diagnosi prima di analizzarla e può poi
+contraddirsi nel testo del ragionamento.
+
+Ogni risposta passa da `pipeline/validator.py`, che normalizza i codici
+(`Mixed`→`MIXED`, `AD PPA`→`AD-PPA`, `FTD|PD` in due voci) e rileva le
+incoerenze residue: diagnosi primaria che non è quella col punteggio più alto,
+punteggi che non sommano a 1, una diagnosi `ESCLUSA` con probabilità residua, la
+primaria ripetuta tra le differenziali, diagnosi non valutate.
+
+**Il validatore segnala, non corregge.** Sostituire la diagnosi scelta dal
+modello con quella a punteggio più alto falsificherebbe proprio il dato che lo
+studio misura. Gli avvisi finiscono in `result.consistency.warnings`, vengono
+mostrati nell'interfaccia con un riquadro di allerta e conteggiati nelle metriche
+di batch (`inconsistent_outputs`), così un'accuracy calcolata su risposte
+contraddittorie è riconoscibile.
+
+Se il modello restituisce una risposta priva di diagnosi primaria, lo step viene
+ripetuto una volta (`LLM_RETRIES_ON_INVALID`) prima di considerarlo perso.
 
 ---
 
