@@ -16,9 +16,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
-import pandas as pd
-
-from config.settings import RESULTS_DIR, DIAGNOSIS_LABELS
+from config.settings import RESULTS_DIR
 
 
 def extract_llm_diagnosis(step_result: dict) -> Optional[str]:
@@ -62,8 +60,11 @@ def evaluate_batch(
     Returns:
         dict con metriche aggregate e record-level concordance
     """
-    assert len(pipeline_results) == len(ground_truths), \
-        "Lunghezze non corrispondenti"
+    if len(pipeline_results) != len(ground_truths):
+        raise ValueError(
+            f"Risultati ({len(pipeline_results)}) e ground truth "
+            f"({len(ground_truths)}) non corrispondono"
+        )
 
     records = []
     step_preds: dict[int, list] = {1: [], 2: [], 3: []}

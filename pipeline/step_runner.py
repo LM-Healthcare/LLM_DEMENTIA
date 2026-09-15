@@ -19,14 +19,11 @@ import time
 from typing import Optional
 
 from config.settings import LLM_MAX_TOKENS, LLM_TEMPERATURE, OLLAMA_MODEL, RAG_STEPS
-from data.loader import build_step_payload
+from data.loader import CSF_CORE_BIOMARKER_COLS, PLASMA_BIOMARKER_COLS, build_step_payload
 from data.preprocessor import format_therapy_for_prompt
 from llm.ollama_client import generate, parse_json_response
 from llm.prompt_builder import build_step1_prompt, build_step2_prompt, build_step3_prompt
 from rag.retriever import retrieve_context, build_queries, format_context_for_prompt, extract_rag_sources
-
-PLASMA_BIOMARKERS = ["Plasma_Ab4240", "plasma_ptau217", "plasma_pt181", "plasma_NfL"]
-CSF_BIOMARKERS = ["CSF_Ab42", "CSF_Ab4240", "CSF_ttau", "CSF_ptau"]
 
 
 def _text(value) -> str:
@@ -36,6 +33,14 @@ def _text(value) -> str:
     if isinstance(value, float) and value != value:  # NaN
         return ""
     return str(value).strip()
+
+
+def _n_available(record: dict, columns: list[str]) -> int:
+    """Quante colonne hanno un valore utilizzabile (NaN di pandas incluso)."""
+    return sum(
+        1 for c in columns
+        if (v := record.get(c)) is not None and not (isinstance(v, float) and v != v)
+    )
 
 
 def _check_step_feasibility(record: dict, step: int) -> tuple[bool, str]:
@@ -50,12 +55,12 @@ def _check_step_feasibility(record: dict, step: int) -> tuple[bool, str]:
         return True, ""
 
     if step == 2:
-        available = [c for c in PLASMA_BIOMARKERS if record.get(c) is not None]
-        return True, f"Plasma: {len(available)}/{len(PLASMA_BIOMARKERS)} biomarcatori disponibili"
+        n = _n_available(record, PLASMA_BIOMARKER_COLS)
+        return True, f"Plasma: {n}/{len(PLASMA_BIOMARKER_COLS)} biomarcatori disponibili"
 
     if step == 3:
-        available = [c for c in CSF_BIOMARKERS if record.get(c) is not None]
-        return True, f"CSF: {len(available)}/{len(CSF_BIOMARKERS)} biomarcatori disponibili"
+        n = _n_available(record, CSF_CORE_BIOMARKER_COLS)
+        return True, f"CSF: {n}/{len(CSF_CORE_BIOMARKER_COLS)} biomarcatori disponibili"
 
     return False, f"Step {step} non valido"
 
@@ -68,6 +73,21 @@ def _clinical_context(record: dict) -> str:
     """
     parts = [_text(record.get("ANAMNESI")), _text(record.get("EON"))]
     return "\n".join(p for p in parts if p)
+
+
+def usable_result(step_result: Optional[dict]) -> Optional[dict]:
+    """
+    Output di uno step utilizzabile come input del successivo.
+
+    Un JSON non parsabile produce {"error": ...}: passarlo allo step seguente
+    inietterebbe una distribuzione diagnostica vuota spacciata per valida.
+    """
+    if not step_result or not step_result.get("feasible"):
+        return None
+    result = step_result.get("result")
+    if not isinstance(result, dict) or "error" in result:
+        return None
+    return result
 
 
 def _skipped(step: int, codice: str, reason: str, model: str) -> dict:
@@ -186,12 +206,14 @@ def run_full_pipeline(
     step l'output integrale di tutti quelli precedenti.
     """
     s1 = run_step(1, record, terapia_parsed, model, parent_store, child_store)
-    step1_result = s1.get("result") if s1.get("feasible") else None
+    step1_result = usable_result(s1)
 
     s2 = run_step(2, record, terapia_parsed, model, parent_store, child_store,
                   step1_result=step1_result)
-    step2_result = s2.get("result") if s2.get("feasible") else None
+    step2_result = usable_result(s2)
 
+    # Se lo step 2 non ha prodotto un output valido, lo step 3 riparte da quello
+    # dello step 1: perdere l'intera pipeline per un JSON malformato sarebbe peggio.
     s3 = run_step(3, record, terapia_parsed, model, parent_store, child_store,
                   step1_result=step1_result,
                   step2_result=step2_result or step1_result)

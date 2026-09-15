@@ -85,6 +85,13 @@ _GENERAL_BY_STEP = {1: _STEP1_GENERAL, 2: _STEP2_GENERAL, 3: _STEP3_GENERAL}
 
 _MAX_CLINICAL_QUERY_CHARS = 1200
 
+# Se si aggiunge una diagnosi in DIAGNOSIS_LABELS senza i termini di ricerca
+# corrispondenti, lo Step 1 non recupera nulla su quella diagnosi e la esclude
+# di fatto dalla differenziale. Meglio accorgersene all'avvio.
+_MISSING_QUERY_TERMS = set(DIAGNOSIS_LABELS) - set(_DIAGNOSIS_TERMS)
+if _MISSING_QUERY_TERMS:
+    print(f"[Retriever] ATTENZIONE: nessun termine di ricerca per {sorted(_MISSING_QUERY_TERMS)}")
+
 
 def build_queries(step: int, clinical_context: str = "") -> list[str]:
     """

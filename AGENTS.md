@@ -25,7 +25,9 @@ Interprete diretto, se serve: `C:/Users/filow/miniconda3/envs/LLM_DEMENTIA/pytho
 | Ispezione chunking (senza embedding) | `python scripts/build_rag.py --dry-run` |
 | Test retrieval | `python scripts/build_rag.py --probe` |
 | Verifica input dei prompt | `python scripts/verify_prompts.py` |
+| Audit fuga della diagnosi | `python scripts/audit_leakage.py` |
 | Test pipeline end-to-end | `python scripts/smoke_pipeline.py --model qwen3.5:4b` |
+| Linter Python | `python -m pyflakes api config data llm pipeline rag scripts run.py` |
 | Typecheck + build frontend | `cd frontend && npm run build` |
 | Lista farmaci da mappare | `python scripts/extract_unidentified_drugs.py` |
 
@@ -38,8 +40,13 @@ Ollama deve essere in esecuzione (`ollama serve`). Modelli richiesti: `bge-m3`
    Controlla che ogni step riceva davvero anamnesi, EON, MMSE, terapia, fattori
    di rischio, biomarcatori del proprio livello e output integrale degli step
    precedenti.
-2. `cd frontend && npm run build` — il typecheck TypeScript è parte del build.
-3. Se sono stati toccati `rag/` o i parametri di chunking:
+2. `python scripts/audit_leakage.py` — deve stampare "nessuna fuga strutturale o
+   letterale". Obbligatorio dopo ogni modifica a `prompt_builder.py`,
+   `build_step_payload` o `step_runner.py`.
+3. `python -m pyflakes api config data llm pipeline rag scripts run.py` — nessun
+   output atteso.
+4. `cd frontend && npm run build` — il typecheck TypeScript è parte del build.
+5. Se sono stati toccati `rag/` o i parametri di chunking:
    `python scripts/build_rag.py --dry-run` e controllare che nessun parent chunk
    sia sotto `RAG_MIN_CHUNK_CHARS`.
 
@@ -51,9 +58,13 @@ Ollama deve essere in esecuzione (`ollama serve`). Modelli richiesti: `bge-m3`
 - **`shutil.rmtree` sull'indice può fallire in silenzio** su Windows/OneDrive.
   Il reset va fatto eliminando le collezioni via API Chroma (`_reset_store`),
   altrimenti restano vive collezioni con la vecchia dimensione.
-- **La knowledge base è `Documenti_/`**, un solo testo: Budson & Solomon,
-  *A Practical Guide for Clinicians*. `Documenti_old/` e `Continuum Demenze/`
-  sono archivi non indicizzati.
+- **La knowledge base è `Documenti_/`**, scansionata ricorsivamente. Contiene un
+  solo testo: Budson & Solomon, *A Practical Guide for Clinicians*.
+- **Il modello non deve mai vedere `Diagnosi_CODIFICATA`, `Diagnosi_TESTUALE` né
+  `PAZIENTE`** (nomi reali). Il payload è costruito da whitelist in
+  `build_step_payload`: non aggiungere passaggi che leggano il `record` grezzo nei
+  prompt. Le colonne dei biomarcatori si dichiarano in `data/loader.py`, unica
+  fonte di verità importata da prompt, API e script.
 - **Le celle vuote dell'Excel sono `float('nan')`, non `""`.** `record.get(k, "")`
   non protegge se la chiave esiste: usare la coercizione `_text()` di
   `pipeline/step_runner.py`.

@@ -25,14 +25,19 @@ if hasattr(sys.stdout, "buffer"):
 
 import pandas as pd
 
-from data.loader import build_step_payload, get_database, get_patient_record
+from data.loader import (
+    CSF_BIOMARKER_COLS,
+    PLASMA_BIOMARKER_COLS,
+    SAFETY_LAB_COLS,
+    build_step_payload,
+    get_database,
+    get_patient_record,
+)
 from data.preprocessor import format_therapy_for_prompt, standardize_therapy
 from llm.prompt_builder import build_step1_prompt, build_step2_prompt, build_step3_prompt
-from pipeline.step_runner import CSF_BIOMARKERS, PLASMA_BIOMARKERS, _clinical_context
+from pipeline.step_runner import _clinical_context
 from rag.retriever import build_queries, extract_rag_sources, format_context_for_prompt, retrieve_context
 from rag.vector_store import load_existing_store
-
-SAFETY_LABS = ["Creatinina", "AST", "ALT", "eGFR_2021"]
 
 # Esito plausibile di uno step 1, usato per verificare la propagazione.
 FAKE_STEP1 = {
@@ -80,7 +85,8 @@ def pick_patient(df: pd.DataFrame, code: str | None) -> dict:
             sys.exit(f"Paziente '{code}' non trovato")
         return record
 
-    cols = PLASMA_BIOMARKERS + CSF_BIOMARKERS + SAFETY_LABS + ["ANAMNESI", "EON", "TERAPIA", "MMSE"]
+    cols = (PLASMA_BIOMARKER_COLS + CSF_BIOMARKER_COLS + SAFETY_LAB_COLS
+            + ["ANAMNESI", "EON", "TERAPIA", "MMSE"])
     present = [c for c in cols if c in df.columns]
     best = df.assign(_filled=df[present].notna().sum(axis=1)).sort_values("_filled", ascending=False)
     return best.iloc[0].drop(labels=["_filled"]).to_dict()
@@ -125,7 +131,6 @@ def verify(record: dict, dump: int | None) -> bool:
 
     ok = True
     for step, (system, user) in prompts.items():
-        full = f"{system}\n{user}"
         print(f"\n--- STEP {step} ({len(system):,} chars system + {len(user):,} chars user) ---")
 
         ok &= check("diagnosi ammesse + valori di riferimento", "VALORI DI RIFERIMENTO" in system)

@@ -13,6 +13,11 @@ from typing import Optional
 from config.settings import DATABASE_PATH, AD_PPA_VARIANTS, DIAGNOSIS_LABELS
 
 
+# ─── Colonne del database per step ────────────────────────────────────────────
+# Unica fonte di verità: ogni consumatore (prompt, API, script) importa da qui.
+# Modificare questi elenchi cambia ciò che il modello vede a ogni livello.
+
+# Step 1: valutazione su base clinica.
 STEP1_CLINICAL_COLS = [
     "ANAMNESI", "TERAPIA", "EON", "MMSE",
     "Fam", "Fumo (attivo o pregresso)",
@@ -21,16 +26,25 @@ STEP1_CLINICAL_COLS = [
     "Age", "Gender", "Anni_edu",
 ]
 
-STEP2_PLASMA_COLS = [
-    "Plasma_Ab4240", "plasma_ptau217", "plasma_pt181", "plasma_NfL",
-    "Creatinina", "AST", "ALT", "eGFR_2021",
-]
+# Step 2: biomarcatori di neurodegenerazione su sangue.
+PLASMA_BIOMARKER_COLS = ["Plasma_Ab4240", "plasma_ptau217", "plasma_pt181", "plasma_NfL"]
 
-STEP3_CSF_COLS = [
-    "CSF_Ab42", "CSF_Ab40", "CSF_Ab4240",
-    "CSF_ttau", "CSF_ptau", "CSF_NfL",
-]
+# Step 2: indici epato-renali. Non sono biomarcatori diagnostici: servono a
+# stabilire se i biomarcatori plasmatici sono attendibili.
+SAFETY_LAB_COLS = ["Creatinina", "AST", "ALT", "eGFR_2021"]
 
+# Step 3: biomarcatori su liquor cerebrospinale.
+CSF_BIOMARKER_COLS = ["CSF_Ab42", "CSF_Ab40", "CSF_Ab4240", "CSF_ttau", "CSF_ptau", "CSF_NfL"]
+
+# Sottoinsieme usato per contare la disponibilità di dati liquorali: Aβ40 e NfL
+# sono spesso assenti anche quando il profilo diagnostico è completo.
+CSF_CORE_BIOMARKER_COLS = ["CSF_Ab42", "CSF_Ab4240", "CSF_ttau", "CSF_ptau"]
+
+STEP2_PLASMA_COLS = PLASMA_BIOMARKER_COLS + SAFETY_LAB_COLS
+STEP3_CSF_COLS = CSF_BIOMARKER_COLS
+
+# Colonne che il modello non deve mai vedere: diagnosi di riferimento e
+# identificativi anagrafici. Escluse da build_step_payload per costruzione.
 HIDDEN_COLS = ["Diagnosi_CODIFICATA", "Diagnosi_TESTUALE", "PAZIENTE"]
 
 

@@ -446,11 +446,3 @@ def create_child_chunks(parent_chunks: list[Document]) -> list[Document]:
     print(f"[RAG] {len(children)} child chunks creati")
     return children
 
-
-def get_document_stats(documents: list[Document]) -> dict:
-    from collections import Counter
-    return {
-        "total_pages": len(documents),
-        "by_source": dict(Counter(d.metadata.get("source", "?") for d in documents)),
-        "by_doc_id": dict(Counter(d.metadata.get("doc_id", "?") for d in documents)),
-    }

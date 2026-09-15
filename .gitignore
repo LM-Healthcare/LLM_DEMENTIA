@@ -24,12 +24,10 @@ env/
 *.csv
 *.epub
 
-# Knowledge base RAG: PDF troppo grandi per git.
-# La KB attiva e' Documenti_/ (Budson & Solomon, A Practical Guide for Clinicians).
-# Documenti_old/ e "Continuum Demenze/" sono archivi non piu' indicizzati.
+# Knowledge base RAG: la cartella Documenti_/ contiene i PDF indicizzati,
+# troppo grandi per git. Attualmente un solo testo:
+# Budson & Solomon, A Practical Guide for Clinicians.
 Documenti_/
-Documenti_old/
-Continuum Demenze/
 
 # Vector store (generato localmente con scripts/build_rag.py)
 chroma_db/
@@ -67,5 +65,4 @@ logs/
 .ipynb_checkpoints/
 *.ipynb
 
-# Dead code (webapp/ folder not in use)
-webapp/
+

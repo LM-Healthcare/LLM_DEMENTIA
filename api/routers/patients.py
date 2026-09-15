@@ -4,10 +4,21 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException
 
 from api.schemas import PatientSummary, PatientDetail, DBStats
-from data.loader import get_database as _get_db, get_patient_record, summary_stats
+from data.loader import (
+    CSF_BIOMARKER_COLS,
+    PLASMA_BIOMARKER_COLS,
+    SAFETY_LAB_COLS,
+    get_database as _get_db,
+    get_patient_record,
+    summary_stats,
+)
 from data.preprocessor import standardize_therapy
 
 router = APIRouter(prefix="/patients", tags=["patients"])
+
+
+def _has_any(row, columns: list[str]) -> bool:
+    return any(pd.notna(row.get(c)) for c in columns)
 
 
 @router.get("/", response_model=list[PatientSummary])
@@ -15,17 +26,13 @@ def list_patients():
     df = _get_db()
     result = []
     for _, row in df.iterrows():
-        plasma_cols = ["Plasma_Ab4240", "plasma_ptau217", "plasma_pt181", "plasma_NfL"]
-        csf_cols = ["CSF_Ab42", "CSF_Ab40", "CSF_Ab4240", "CSF_ttau", "CSF_ptau"]
-        has_plasma = any(pd.notna(row.get(c)) for c in plasma_cols)
-        has_csf = any(pd.notna(row.get(c)) for c in csf_cols)
         result.append(PatientSummary(
             codice=str(row.get("Codice", "")),
             age=int(row["Age"]) if pd.notna(row.get("Age")) else None,
             gender=str(row.get("Gender")) if pd.notna(row.get("Gender")) else None,
             diagnosis_gt=str(row.get("Diagnosi_CODIFICATA", "")),
-            has_plasma=has_plasma,
-            has_csf=has_csf,
+            has_plasma=_has_any(row, PLASMA_BIOMARKER_COLS),
+            has_csf=_has_any(row, CSF_BIOMARKER_COLS),
             mmse=float(row["MMSE"]) if pd.notna(row.get("MMSE")) else None,
         ))
     return result
@@ -67,10 +74,8 @@ def get_patient(code: str):
         age=int(record["Age"]) if pd.notna(record.get("Age")) else None,
         gender=str(record.get("Gender")) if pd.notna(record.get("Gender")) else None,
         diagnosis_gt=str(record.get("Diagnosi_CODIFICATA", "")),
-        has_plasma=any(_float(record.get(c)) is not None for c in
-                       ["Plasma_Ab4240", "plasma_ptau217", "plasma_pt181", "plasma_NfL"]),
-        has_csf=any(_float(record.get(c)) is not None for c in
-                    ["CSF_Ab42", "CSF_Ab40", "CSF_Ab4240", "CSF_ttau", "CSF_ptau"]),
+        has_plasma=_has_any(record, PLASMA_BIOMARKER_COLS),
+        has_csf=_has_any(record, CSF_BIOMARKER_COLS),
         mmse=_float(record.get("MMSE")),
         anamnesi=str(record.get("ANAMNESI")) if pd.notna(record.get("ANAMNESI")) else None,
         eon=str(record.get("EON")) if pd.notna(record.get("EON")) else None,
@@ -84,24 +89,7 @@ def get_patient(code: str):
         cardiovascolare=_bool(record.get("Malattia_cardiovascolare")),
         diabete=_bool(record.get("Diabete")),
         dislipidemia=_bool(record.get("Dislipidemia")),
-        plasma={
-            "Plasma_Ab4240": _float(record.get("Plasma_Ab4240")),
-            "plasma_ptau217": _float(record.get("plasma_ptau217")),
-            "plasma_pt181": _float(record.get("plasma_pt181")),
-            "plasma_NfL": _float(record.get("plasma_NfL")),
-        },
-        csf={
-            "CSF_Ab42": _float(record.get("CSF_Ab42")),
-            "CSF_Ab40": _float(record.get("CSF_Ab40")),
-            "CSF_Ab4240": _float(record.get("CSF_Ab4240")),
-            "CSF_ttau": _float(record.get("CSF_ttau")),
-            "CSF_ptau": _float(record.get("CSF_ptau")),
-            "CSF_NfL": _float(record.get("CSF_NfL")),
-        },
-        safety_labs={
-            "Creatinina": _float(record.get("Creatinina")),
-            "AST": _float(record.get("AST")),
-            "ALT": _float(record.get("ALT")),
-            "eGFR_2021": _float(record.get("eGFR_2021")),
-        },
+        plasma={c: _float(record.get(c)) for c in PLASMA_BIOMARKER_COLS},
+        csf={c: _float(record.get(c)) for c in CSF_BIOMARKER_COLS},
+        safety_labs={c: _float(record.get(c)) for c in SAFETY_LAB_COLS},
     )

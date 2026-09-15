@@ -113,43 +113,6 @@ def _error_json(message: str) -> str:
     return json.dumps({"error": message}, ensure_ascii=False)
 
 
-def generate_stream(
-    prompt: str,
-    system: str = "",
-    model: str = OLLAMA_MODEL,
-    temperature: float = LLM_TEMPERATURE,
-    max_tokens: int = LLM_MAX_TOKENS,
-) -> Generator[str, None, None]:
-    """Genera testo in streaming (per UI real-time)."""
-    url = f"{OLLAMA_BASE_URL}/api/generate"
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "system": system,
-        "stream": True,
-        "options": {
-            "temperature": temperature,
-            "num_predict": max_tokens,
-        },
-    }
-    try:
-        with requests.post(url, json=payload, stream=True, timeout=300) as response:
-            response.raise_for_status()
-            for line in response.iter_lines():
-                if line:
-                    try:
-                        data = json.loads(line.decode("utf-8"))
-                        token = data.get("response", "")
-                        if token:
-                            yield token
-                        if data.get("done", False):
-                            return
-                    except json.JSONDecodeError:
-                        continue
-    except Exception as e:
-        yield f"\n[Errore streaming: {e}]"
-
-
 # Quanti delimitatori arretrare al massimo cercando un punto di taglio valido.
 _REPAIR_BACKTRACK_LIMIT = 400
 

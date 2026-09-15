@@ -24,7 +24,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pandas as pd
 from data.loader import get_database as load_database
 from data.preprocessor import standardize_therapy
 

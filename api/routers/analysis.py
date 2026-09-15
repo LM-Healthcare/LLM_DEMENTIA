@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+import json
+import re
+from datetime import datetime
 
 import pandas as pd
 from fastapi import APIRouter, BackgroundTasks, HTTPException
-from fastapi.responses import JSONResponse
 
 from api.schemas import RunStepRequest, RunPipelineRequest, BatchRunRequest, StepResult, SaveIndividualRequest
 from api.state import get_app_state
+from config.settings import RESULTS_DIR
 from data.loader import get_database, get_patient_record, get_all_codes, get_ground_truth
 from data.preprocessor import standardize_therapy
 from pipeline.step_runner import run_step, run_full_pipeline
@@ -146,24 +148,19 @@ def batch_progress():
 
 @router.post("/save-individual")
 def save_individual(req: SaveIndividualRequest):
-    import json
-    from datetime import datetime
-    from pathlib import Path
-    from config.settings import RESULTS_DIR
-
+    """Archivia il caso singolo in results/individual/ per confrontare i modelli."""
     record, _ = _get_record(req.patient_code)
-    gt = get_ground_truth(record)
 
-    out_dir = Path(RESULTS_DIR) / "individual"
+    out_dir = RESULTS_DIR / "individual"
     out_dir.mkdir(exist_ok=True, parents=True)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_safe = req.model.replace(":", "_").replace("/", "_")
+    model_safe = re.sub(r"[^A-Za-z0-9._-]", "_", req.model)
     filename = out_dir / f"{req.patient_code}_{model_safe}_{ts}.json"
 
     data = {
         "patient_code": req.patient_code,
-        "ground_truth": gt,
+        "ground_truth": get_ground_truth(record),
         "model": req.model,
         "timestamp": ts,
         "step1": req.step1,
@@ -174,4 +171,4 @@ def save_individual(req: SaveIndividualRequest):
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2, default=str)
 
-    return {"message": f"Risultati salvati", "filename": filename.name}
+    return {"message": "Risultati salvati", "filename": filename.name}

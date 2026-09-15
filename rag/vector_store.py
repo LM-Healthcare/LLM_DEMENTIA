@@ -170,14 +170,6 @@ def iter_child_corpus(child_store: Chroma) -> list[Document]:
     ]
 
 
-def is_store_ready() -> bool:
-    """Controlla se il vector store è già stato costruito."""
-    db_path = Path(CHROMA_DB_PATH)
-    if not db_path.exists():
-        return False
-    return bool(list(db_path.glob("*.sqlite3")))
-
-
 def get_store_stats() -> dict:
     parent_store, child_store = load_existing_store()
     if parent_store is None:
