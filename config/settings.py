@@ -68,44 +68,88 @@ DIAGNOSIS_LABELS = {
 
 AD_PPA_VARIANTS = ["AD -PPA", "AD-PPA", "AD_PPA", "AD PPA"]
 
-REFERENCE_VALUES = {
-    "CSF_Ab42":     {"min": 725,    "max": 1777,   "unit": "pg/mL",        "direction": "range"},
-    "CSF_Ab4240":   {"min": 0.068,  "max": 0.115,  "unit": "ratio",        "direction": "range"},
-    "CSF_ttau":     {"min": 146,    "max": 410,    "unit": "pg/mL",        "direction": "range"},
-    "CSF_ptau":     {"min": 2.5,    "max": 59,     "unit": "pg/mL",        "direction": "range"},
-    "CSF_NfL":      {"min": None,   "max": 300,    "unit": "pg/mL",        "direction": "upper"},
-    "Plasma_Ab4240":{"min": 0.0807, "max": None,   "unit": "ratio",        "direction": "lower"},
-    "plasma_ptau217":{"min": None,  "max": 0.21,   "unit": "pg/mL",        "direction": "upper"},
-    "plasma_pt181": {"min": None,   "max": 1.8,    "unit": "pg/mL",        "direction": "upper"},
-    "plasma_NfL":   {"min": None,   "max": 8.5,    "unit": "pg/mL",        "direction": "upper"},
-    "Creatinina":   {"min": None,   "max": 1.1,    "unit": "mg/dL",        "direction": "upper"},
-    "AST":          {"min": 5,      "max": 34,     "unit": "U/L",          "direction": "range"},
-    "ALT":          {"min": 0,      "max": 55,     "unit": "U/L",          "direction": "range"},
-    "eGFR_2021":    {"min": 60,     "max": None,   "unit": "mL/min/1.73m²","direction": "lower"},
+# ─── Valori di riferimento dei biomarcatori ───────────────────────────────────
+# Unica fonte di verità: da qui si generano sia il blocco del system prompt sia
+# le annotazioni "(normale: ...)" accanto a ogni valore nei prompt. Prima i
+# cut-off erano ripetuti in tre punti indipendenti e potevano divergere in
+# silenzio. Corrispondono a "Valori di riferimento_lab.xlsx", con cui possono
+# essere confrontati da scripts/check_reference_values.py.
+REFERENCE_VALUES: dict[str, dict] = {
+    "CSF_Ab42":      {"min": 725,    "max": 1777,  "unit": "pg/mL", "direction": "range",
+                      "label": "CSF Aβ42", "group": "CSF", "note": "basso → patologico per AD"},
+    "CSF_Ab40":      {"min": None,   "max": None,  "unit": "pg/mL", "direction": "none",
+                      "label": "CSF Aβ40", "group": "CSF",
+                      "note": "nessun intervallo: si interpreta come denominatore del rapporto"},
+    "CSF_Ab4240":    {"min": 0.068,  "max": 0.115, "unit": "",      "direction": "range",
+                      "label": "CSF Aβ42/40", "group": "CSF", "note": "basso → patologico per AD"},
+    "CSF_ttau":      {"min": 146,    "max": 410,   "unit": "pg/mL", "direction": "range",
+                      "label": "CSF t-tau", "group": "CSF", "note": "alto → danno neuronale"},
+    "CSF_ptau":      {"min": 2.5,    "max": 59,    "unit": "pg/mL", "direction": "range",
+                      "label": "CSF p-tau", "group": "CSF", "note": "alto → patologia tau AD"},
+    "CSF_NfL":       {"min": None,   "max": 300,   "unit": "pg/mL", "direction": "upper",
+                      "label": "CSF NfL", "group": "CSF", "note": "alto → neurodegenerazione"},
+    "Plasma_Ab4240": {"min": 0.0807, "max": None,  "unit": "",      "direction": "lower",
+                      "label": "Plasma Aβ42/40", "group": "PLASMA", "note": "basso → patologico per AD"},
+    "plasma_ptau217":{"min": None,   "max": 0.21,  "unit": "pg/mL", "direction": "upper",
+                      "label": "Plasma p-tau217", "group": "PLASMA", "note": "alto → patologico per AD"},
+    "plasma_pt181":  {"min": None,   "max": 1.8,   "unit": "pg/mL", "direction": "upper",
+                      "label": "Plasma p-tau181", "group": "PLASMA", "note": "alto → patologico per AD"},
+    "plasma_NfL":    {"min": None,   "max": 8.5,   "unit": "pg/mL", "direction": "upper",
+                      "label": "Plasma NfL", "group": "PLASMA", "note": "alto → neurodegenerazione"},
+    "Creatinina":    {"min": None,   "max": 1.1,   "unit": "mg/dL", "direction": "upper",
+                      "label": "Creatinina", "group": "SAFETY", "note": "alto → possibile compromissione renale"},
+    "AST":           {"min": 5,      "max": 34,    "unit": "U/L",   "direction": "range",
+                      "label": "AST", "group": "SAFETY", "note": "alto → possibile compromissione epatica"},
+    "ALT":           {"min": 0,      "max": 55,    "unit": "U/L",   "direction": "range",
+                      "label": "ALT", "group": "SAFETY", "note": "alto → possibile compromissione epatica"},
+    "eGFR_2021":     {"min": 60,     "max": None,  "unit": "mL/min/1.73m²", "direction": "lower",
+                      "label": "eGFR", "group": "SAFETY", "note": "basso → compromissione renale"},
 }
 
-REFERENCE_VALUES_TEXT = """
-=== VALORI DI RIFERIMENTO BIOMARCATORI ===
+def _fmt_number(value: float) -> str:
+    return f"{value:g}"
 
-LIQUOR CEREBROSPINALE (CSF):
-  - CSF Aβ42:        725–1777 pg/mL        (basso → patologico per AD)
-  - CSF Aβ42/40:     0.068–0.115           (basso → patologico per AD)
-  - CSF t-tau:       146–410 pg/mL         (alto → danno neuronale)
-  - CSF p-tau:       2.5–59 pg/mL          (alto → patologia tau AD)
-  - CSF NfL:         < 300 pg/mL           (alto → neurodegenerazione)
 
-PLASMA:
-  - Plasma Aβ42/40:  > 0.0807             (basso → patologico per AD)
-  - Plasma p-tau217: < 0.21 pg/mL         (alto → patologico per AD)
-  - Plasma p-tau181: < 1.8 pg/mL          (alto → patologico per AD)
-  - Plasma NfL:      < 8.5 pg/mL          (alto → neurodegenerazione)
+def reference_range(col: str) -> str:
+    """
+    Intervallo di normalità di un marcatore, es. '725-1777 pg/mL' o '<0.21 pg/mL'.
+    Stringa vuota per i marcatori privi di intervallo (direction 'none').
+    """
+    ref = REFERENCE_VALUES.get(col)
+    if ref is None or ref["direction"] == "none":
+        return ""
+    direction, unit = ref["direction"], ref["unit"]
+    if direction == "range":
+        body = f"{_fmt_number(ref['min'])}-{_fmt_number(ref['max'])}"
+    elif direction == "upper":
+        body = f"<{_fmt_number(ref['max'])}"
+    else:
+        body = f">{_fmt_number(ref['min'])}"
+    return f"{body} {unit}".strip()
 
-MARCATORI EPATICO-RENALI (affidabilità biomarcatori):
-  - Creatinina:      < 1.1 mg/dL          (alto → possibile compromissione renale)
-  - AST:             5–34 U/L             (alto → possibile compromissione epatica)
-  - ALT:             0–55 U/L             (alto → possibile compromissione epatica)
-  - eGFR:            > 60 mL/min/1.73m²  (basso → compromissione renale)
 
-NOTA: Alterazioni di Creatinina, AST, ALT o eGFR possono ridurre l'affidabilità
-dei biomarcatori plasmatici di neurodegenerazione.
-"""
+def reference_hint(col: str) -> str:
+    """Annotazione da affiancare al valore nel prompt, es. '(normale: <0.21 pg/mL)'."""
+    rng = reference_range(col)
+    return f"(normale: {rng})" if rng else ""
+
+
+def _build_reference_text() -> str:
+    groups = (
+        ("LIQUOR CEREBROSPINALE (CSF)", "CSF"),
+        ("PLASMA", "PLASMA"),
+        ("MARCATORI EPATICO-RENALI (affidabilità biomarcatori)", "SAFETY"),
+    )
+    lines = ["", "=== VALORI DI RIFERIMENTO BIOMARCATORI ===", ""]
+    for title, group in groups:
+        lines.append(f"{title}:")
+        for col, ref in REFERENCE_VALUES.items():
+            if ref["group"] == group and reference_range(col):
+                lines.append(f"  - {ref['label']+':':<18} {reference_range(col):<22} ({ref['note']})")
+        lines.append("")
+    lines.append("NOTA: Alterazioni di Creatinina, AST, ALT o eGFR possono ridurre "
+                 "l'affidabilità\ndei biomarcatori plasmatici di neurodegenerazione.")
+    return "\n".join(lines)
+
+
+REFERENCE_VALUES_TEXT = _build_reference_text()

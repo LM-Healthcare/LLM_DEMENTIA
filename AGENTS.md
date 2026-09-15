@@ -26,6 +26,7 @@ Interprete diretto, se serve: `C:/Users/filow/miniconda3/envs/LLM_DEMENTIA/pytho
 | Test retrieval | `python scripts/build_rag.py --probe` |
 | Verifica input dei prompt | `python scripts/verify_prompts.py` |
 | Audit fuga della diagnosi | `python scripts/audit_leakage.py` |
+| Cut-off vs foglio clinici | `python scripts/check_reference_values.py` |
 | Test pipeline end-to-end | `python scripts/smoke_pipeline.py --model qwen3.5:4b` |
 | Linter Python | `python -m pyflakes api config data llm pipeline rag scripts run.py` |
 | Typecheck + build frontend | `cd frontend && npm run build` |
@@ -68,6 +69,11 @@ Ollama deve essere in esecuzione (`ollama serve`). Modelli richiesti: `bge-m3`
 - **Le celle vuote dell'Excel sono `float('nan')`, non `""`.** `record.get(k, "")`
   non protegge se la chiave esiste: usare la coercizione `_text()` di
   `pipeline/step_runner.py`.
+- **I cut-off dei biomarcatori si dichiarano solo in `REFERENCE_VALUES`**
+  (`config/settings.py`). Da lì si generano il blocco del system prompt e le
+  annotazioni `(normale: ...)` nei prompt: non reintrodurre valori hardcoded in
+  `prompt_builder.py`. `scripts/check_reference_values.py` verifica
+  l'allineamento con *Valori di riferimento_lab.xlsx*.
 - **Il matching dei farmaci è a confine di parola** con preferenza per la chiave
   più lunga (`_match_drug` in `data/preprocessor.py`). Il match per sottostringa
   nuda produceva errori clinici reali (`citalopram` → Escitalopram,

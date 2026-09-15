@@ -17,7 +17,13 @@ Struttura di ogni prompt:
 
 from __future__ import annotations
 
-from config.settings import REFERENCE_VALUES_TEXT, DIAGNOSIS_LABELS
+from config.settings import (
+    DIAGNOSIS_LABELS,
+    REFERENCE_VALUES,
+    REFERENCE_VALUES_TEXT,
+    reference_hint,
+)
+from data.loader import CSF_BIOMARKER_COLS, PLASMA_BIOMARKER_COLS, SAFETY_LAB_COLS
 
 _DIAGNOSIS_LIST = "\n".join(f"  - {k}: {v}" for k, v in DIAGNOSIS_LABELS.items())
 
@@ -220,30 +226,42 @@ FATTORI DI RISCHIO:
 {_risk_factors(patient)}"""
 
 
+def _marker_lines(patient: dict, columns: list[str], decimals: dict[str, int]) -> str:
+    """
+    Una riga per marcatore: etichetta, valore, unità e intervallo di normalità.
+    Etichette e cut-off vengono da REFERENCE_VALUES: nessun valore hardcoded qui,
+    così i riferimenti nel prompt non possono divergere da quelli del system prompt.
+    """
+    lines = []
+    for col in columns:
+        ref = REFERENCE_VALUES.get(col, {})
+        raw = patient.get(col)
+        value = _fmt(raw, decimals.get(col, 2))
+        # Unità e intervallo si stampano solo accanto a un valore reale:
+        # "MANCANTE pg/mL" sarebbe fuorviante.
+        unit = ref.get("unit", "") if raw is not None else ""
+        hint = reference_hint(col) if raw is not None else ""
+        lines.append(" ".join(p for p in (f"{ref.get('label', col)}:", value, unit, hint) if p))
+    return "\n".join(lines)
+
+
+# I rapporti Aβ42/40 e la p-tau plasmatica richiedono più decimali dei valori assoluti.
+_DECIMALS = {"Plasma_Ab4240": 4, "plasma_ptau217": 4, "plasma_pt181": 4, "CSF_Ab4240": 4}
+
+
 def _plasma_block(patient: dict) -> str:
-    return f"""=== BIOMARCATORI EMATICI ===
-Plasma Aβ42/40: {_fmt(patient.get('Plasma_Ab4240'), 4)} (normale: >0.0807)
-Plasma p-tau217: {_fmt(patient.get('plasma_ptau217'), 4)} pg/mL (normale: <0.21)
-Plasma p-tau181: {_fmt(patient.get('plasma_pt181'), 4)} pg/mL (normale: <1.8)
-Plasma NfL: {_fmt(patient.get('plasma_NfL'), 2)} pg/mL (normale: <8.5)"""
+    return ("=== BIOMARCATORI EMATICI ===\n"
+            + _marker_lines(patient, PLASMA_BIOMARKER_COLS, _DECIMALS))
 
 
 def _safety_block(patient: dict) -> str:
-    return f"""=== FUNZIONALITÀ EPATO-RENALE (affidabilità biomarcatori) ===
-Creatinina: {_fmt(patient.get('Creatinina'))} mg/dL (normale: <1.1)
-AST: {_fmt(patient.get('AST'))} U/L (normale: 5-34)
-ALT: {_fmt(patient.get('ALT'))} U/L (normale: 0-55)
-eGFR: {_fmt(patient.get('eGFR_2021'))} mL/min/1.73m² (normale: >60)"""
+    return ("=== FUNZIONALITÀ EPATO-RENALE (affidabilità biomarcatori) ===\n"
+            + _marker_lines(patient, SAFETY_LAB_COLS, _DECIMALS))
 
 
 def _csf_block(patient: dict) -> str:
-    return f"""=== BIOMARCATORI LIQUOR CEREBROSPINALE (CSF) ===
-CSF Aβ42: {_fmt(patient.get('CSF_Ab42'))} pg/mL (normale: 725-1777)
-CSF Aβ40: {_fmt(patient.get('CSF_Ab40'))} pg/mL
-CSF Aβ42/40: {_fmt(patient.get('CSF_Ab4240'), 4)} (normale: 0.068-0.115)
-CSF t-tau: {_fmt(patient.get('CSF_ttau'))} pg/mL (normale: 146-410)
-CSF p-tau: {_fmt(patient.get('CSF_ptau'))} pg/mL (normale: 2.5-59)
-CSF NfL: {_fmt(patient.get('CSF_NfL'))} pg/mL (normale: <300)"""
+    return ("=== BIOMARCATORI LIQUOR CEREBROSPINALE (CSF) ===\n"
+            + _marker_lines(patient, CSF_BIOMARKER_COLS, _DECIMALS))
 
 
 def _diagnosis_line(entry: dict, marker: str = "") -> str:

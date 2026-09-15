@@ -79,9 +79,17 @@ hanno prodotto il match.
 ```bash
 python scripts/verify_prompts.py                      # ogni step riceve tutti gli input previsti
 python scripts/audit_leakage.py                       # la diagnosi non raggiunge il modello
+python scripts/check_reference_values.py              # cut-off allineati al foglio dei clinici
 python scripts/smoke_pipeline.py --model qwen3.5:4b   # pipeline end-to-end
 cd frontend && npm run build                          # typecheck + build
 ```
+
+I cut-off dei biomarcatori sono dichiarati una sola volta, in `REFERENCE_VALUES`
+(`config/settings.py`), e da lì vengono generati sia il blocco di riferimento del
+system prompt sia le annotazioni `(normale: ...)` accanto a ogni valore.
+`check_reference_values.py` li confronta con *Valori di riferimento_lab.xlsx*, il
+documento autorevole dei clinici: una revisione dei cut-off sul foglio non passa
+inosservata. Unica eccezione, `eGFR > 60`, che non compare sul foglio.
 
 `verify_prompts.py` deve stampare "TUTTI I CONTROLLI SUPERATI" e
 `audit_leakage.py` "nessuna fuga strutturale o letterale". Entrambi restituiscono
