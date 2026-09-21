@@ -25,32 +25,33 @@ Interprete diretto, se serve: `C:/Users/filow/miniconda3/envs/LLM_DEMENTIA/pytho
 | Ispezione chunking (senza embedding) | `python scripts/build_rag.py --dry-run` |
 | Test retrieval | `python scripts/build_rag.py --probe` |
 | Test del validatore | `python scripts/test_validator.py` |
+| Test biomarcatori/ATN | `python scripts/test_biomarkers.py` |
+| Test parser/evaluator | `python scripts/test_json_parser.py && python scripts/test_evaluator.py` |
 | Verifica input dei prompt | `python scripts/verify_prompts.py` |
-| Audit fuga della diagnosi | `python scripts/audit_leakage.py` |
+| Audit leakage/dataset | `python scripts/audit_leakage.py && python scripts/audit_dataset.py` |
 | Cut-off vs foglio clinici | `python scripts/check_reference_values.py` |
-| Test pipeline end-to-end | `python scripts/smoke_pipeline.py --model qwen3.5:4b` |
+| Test pipeline end-to-end | `python scripts/smoke_pipeline.py --model qwen3.5:latest --code T2 --seed 1001` |
 | Linter Python | `python -m pyflakes api config data llm pipeline rag scripts run.py` |
 | Typecheck + build frontend | `cd frontend && npm run build` |
 | Lista farmaci da mappare | `python scripts/extract_unidentified_drugs.py` |
 
-Ollama deve essere in esecuzione (`ollama serve`). Modelli richiesti: `bge-m3`
-(embedding, obbligatorio) più almeno un modello diagnostico.
+Ollama deve essere in esecuzione (`ollama serve`). Modelli dello studio:
+`qwen3.5:latest` (9.7B Q4_K_M), `ministral-3:8b` (8.9B Q4_K_M),
+`llama3.1:8b` (8.0B Q4_K_M); embedding `bge-m3`. Parametri condivisi:
+temperature 0.1, num_ctx 12288, num_predict 4096, retry 0.
 
 ## Verifica prima di considerare un lavoro concluso
 
-1. `python scripts/test_validator.py` — obbligatorio dopo ogni modifica a
-   `pipeline/validator.py` o allo schema JSON dei prompt.
+1. Eseguire `test_validator.py`, `test_biomarkers.py`, `test_json_parser.py` e
+   `test_evaluator.py`.
 2. `python scripts/verify_prompts.py` — deve stampare "TUTTI I CONTROLLI SUPERATI".
-   Controlla che ogni step riceva davvero anamnesi, EON, MMSE, terapia, fattori
-   di rischio, biomarcatori del proprio livello e output integrale degli step
-   precedenti.
 3. `python scripts/audit_leakage.py` — deve stampare "nessuna fuga strutturale o
-   letterale". Obbligatorio dopo ogni modifica a `prompt_builder.py`,
-   `build_step_payload` o `step_runner.py`.
-4. `python -m pyflakes api config data llm pipeline rag scripts run.py` — nessun
+   letterale"; `audit_dataset.py` non deve trovare errori strutturali.
+4. `python scripts/check_reference_values.py` — cut-off allineati al foglio.
+5. `python -m pyflakes api config data llm pipeline rag scripts run.py` — nessun
    output atteso.
-5. `cd frontend && npm run build` — il typecheck TypeScript è parte del build.
-6. Se sono stati toccati `rag/` o i parametri di chunking:
+6. `cd frontend && npm run build` — il typecheck TypeScript è parte del build.
+7. Se sono stati toccati `rag/` o i parametri di chunking:
    `python scripts/build_rag.py --dry-run` e controllare che nessun parent chunk
    sia sotto `RAG_MIN_CHUNK_CHARS`.
 
@@ -72,18 +73,21 @@ Ollama deve essere in esecuzione (`ollama serve`). Modelli richiesti: `bge-m3`
 - **Le celle vuote dell'Excel sono `float('nan')`, non `""`.** `record.get(k, "")`
   non protegge se la chiave esiste: usare la coercizione `_text()` di
   `pipeline/step_runner.py`.
-- **Nello schema JSON dei prompt il ragionamento precede sempre il verdetto.**
-  La generazione è autoregressiva: se `diagnosis` viene prima di `reasoning`, il
-  modello sceglie l'etichetta prima di ragionare e poi si contraddice nel testo.
-  L'ordine corretto è `diagnostic_reasoning` → `primary_diagnosis` (con
-  `reasoning` come primo campo interno) → `differential_diagnoses`, e le liste
-  lunghe (`rag_evidence`) vanno in fondo, perché i modelli piccoli a volte
-  chiudono il JSON in anticipo e i campi finali si perdono.
-- **Il validatore non corregge la diagnosi, la segnala.** Sovrascrivere la scelta
-  del modello con l'argmax falsificherebbe il dato che lo studio misura. Le
-  normalizzazioni ammesse sono solo sintattiche (codici, etichette, tipi,
-  espansione di "FTD|PD"); le incoerenze di merito finiscono in
-  `result.consistency.warnings` e vengono mostrate nell'interfaccia.
+- **L'output LLM usa otto chiavi diagnostiche fisse.** L'ordine è
+  `diagnostic_reasoning` → `diagnosis_assessments` (AD, AD-PPA, MIXED, VAD, SCD,
+  LATE, FTD, PD) → `primary_diagnosis`. Non reintrodurre array liberi: i modelli
+  7–9B duplicano classi e ne omettono altre anche sotto JSON Schema.
+- **Conservare sempre grezzo e normalizzato.** `model_result` è il JSON originario
+  e viene passato allo step successivo; `result` è la vista normalizzata per UI e
+  metriche. I raw score restano in `reported_confidence_score`, quelli normalizzati
+  in `confidence_score`. Il validatore segnala ma non cambia la diagnosi primaria.
+- **Nessun retry nell'evaluation.** `LLM_RETRIES_ON_INVALID=0`: selezionare un
+  tentativo valido introdurrebbe bias. Parse status, riparazioni e tentativi sono
+  parte dell'audit trail.
+- **Il modello non ricalcola biomarcatori o ATN.** `data/biomarkers.py` calcola
+  status, confondenti epato-renali, ATN e concordanza. Il modello riceve questi
+  risultati e produce solo l'interpretazione clinica. La regola operativa ATN usa
+  Aβ42/40 prioritario (Aβ42 come fallback), p-tau per T, t-tau o NfL per N.
 - **I cut-off dei biomarcatori si dichiarano solo in `REFERENCE_VALUES`**
   (`config/settings.py`). Da lì si generano il blocco del system prompt e le
   annotazioni `(normale: ...)` nei prompt: non reintrodurre valori hardcoded in

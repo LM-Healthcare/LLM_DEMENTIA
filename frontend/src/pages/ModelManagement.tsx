@@ -4,12 +4,10 @@ import { api } from '@/api/client'
 import type { ModelInfo } from '@/types'
 
 const SUGGESTED_MODELS = [
-  { name: 'llama3.1:8b',     desc: 'Meta Llama 3.1 8B — consigliato (bilanciato)',    size: '4.7 GB' },
-  { name: 'llama3.2:3b',     desc: 'Meta Llama 3.2 3B — leggero, veloce',             size: '2.0 GB' },
-  { name: 'gemma2:9b',       desc: 'Google Gemma 2 9B — ottima comprensione',         size: '5.4 GB' },
-  { name: 'mistral:7b',      desc: 'Mistral 7B — versatile',                          size: '4.1 GB' },
-  { name: 'qwen2.5:7b',      desc: 'Alibaba Qwen 2.5 7B — buono in italiano',         size: '4.4 GB' },
-  { name: 'bge-m3', desc: 'BGE-M3 — embeddings multilingue per il RAG (obbligatorio)', size: '1.2 GB' },
+  { name: 'qwen3.5:latest',   desc: 'Qwen 3.5 9B — modello dello studio',               size: '6.6 GB' },
+  { name: 'ministral-3:8b',  desc: 'Ministral 3 8B — modello dello studio',            size: '6.0 GB' },
+  { name: 'llama3.1:8b',     desc: 'Meta Llama 3.1 8B — modello dello studio',         size: '4.7 GB' },
+  { name: 'bge-m3',          desc: 'BGE-M3 — embedding multilingue RAG obbligatorio',  size: '1.2 GB' },
 ]
 
 export default function ModelManagement() {

@@ -34,6 +34,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Smoke test della pipeline")
     ap.add_argument("--model", required=True, help="nome del modello Ollama")
     ap.add_argument("--code", help="codice paziente (default: il primo con CSF)")
+    ap.add_argument("--seed", type=int, default=1001, help="seed riproducibile")
     args = ap.parse_args()
 
     df = get_database()
@@ -56,7 +57,9 @@ def main() -> None:
 
     print(f"Paziente {record.get('Codice')} | ground truth: {gt} | modello: {args.model}\n")
 
-    results = run_full_pipeline(record, terapia, args.model, parent_store, child_store)
+    results = run_full_pipeline(
+        record, terapia, args.model, parent_store, child_store, seed=args.seed
+    )
 
     for step in (1, 2, 3):
         sr = results[f"step{step}"]
@@ -75,6 +78,12 @@ def main() -> None:
         print(f"  diagnosi    : {primary.get('diagnosis')} "
               f"({primary.get('probability')}, score={primary.get('confidence_score')})")
         print(f"  differenziali: {len(out.get('differential_diagnoses') or [])}")
+        consistency = out.get("consistency") or {}
+        print(f"  warning      : {len(consistency.get('warnings') or [])}")
+        print(f"  parse        : {(sr.get('parse_metadata') or {}).get('status')}")
+        ollama_meta = (sr.get("generation_metadata") or {}).get("ollama") or {}
+        print(f"  token        : prompt={ollama_meta.get('prompt_eval_count')} "
+              f"output={ollama_meta.get('eval_count')} reason={ollama_meta.get('done_reason')}")
         if sr["rag_sources"]:
             used = out.get("rag_sources_used") or []
             print(f"  fonti RAG   : {len(sr['rag_sources'])} recuperate, {len(used)} citate {used}")

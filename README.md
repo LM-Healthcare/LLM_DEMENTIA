@@ -24,8 +24,10 @@ Una volta sola:
 conda env create -f environment.yml
 conda activate LLM_DEMENTIA
 
-ollama pull bge-m3        # embedding della knowledge base (obbligatorio)
-ollama pull llama3.1:8b   # modello diagnostico (uno a scelta)
+ollama pull bge-m3           # embedding RAG obbligatorio
+ollama pull qwen3.5:latest   # Qwen 3.5 9B (9.7B effettivi)
+ollama pull ministral-3:8b   # Ministral 3 8B
+ollama pull llama3.1:8b      # Meta Llama 3.1 8B
 ```
 
 ## Avvio
@@ -58,7 +60,9 @@ compila il frontend se manca e serve API e interfaccia su
 
 La KB è la cartella `Documenti_/`, scansionata ricorsivamente. Attualmente
 contiene un solo testo di riferimento: *Budson & Solomon — A Practical Guide for
-Clinicians*. I PDF non sono versionati.
+Clinicians*. I PDF della knowledge base non sono versionati. `Class_DX.pdf` è
+invece un documento di protocollo fornito dal team clinico e non viene
+indicizzato nel RAG.
 
 ```bash
 python scripts/build_rag.py --dry-run   # solo chunking, nessun embedding
@@ -78,11 +82,15 @@ hanno prodotto il match.
 
 ```bash
 python scripts/test_validator.py                      # coerenza dell'output diagnostico
-python scripts/verify_prompts.py                      # ogni step riceve tutti gli input previsti
+python scripts/test_biomarkers.py                     # cut-off e profilo ATN deterministico
+python scripts/test_json_parser.py                    # parsing esatto/riparato tracciato
+python scripts/test_evaluator.py                      # metriche e output invalidi
+python scripts/verify_prompts.py                      # input effettivi dei tre step
 python scripts/audit_leakage.py                       # la diagnosi non raggiunge il modello
-python scripts/check_reference_values.py              # cut-off allineati al foglio dei clinici
-python scripts/smoke_pipeline.py --model qwen3.5:4b   # pipeline end-to-end
-cd frontend && npm run build                          # typecheck + build
+python scripts/audit_dataset.py                       # schema, missingness e outlier
+python scripts/check_reference_values.py              # cut-off vs foglio dei clinici
+python scripts/smoke_pipeline.py --model qwen3.5:latest --code T2 --seed 1001
+cd frontend && npm run build
 ```
 
 I cut-off dei biomarcatori sono dichiarati una sola volta, in `REFERENCE_VALUES`
@@ -114,17 +122,19 @@ un exit code diverso da zero in caso di problema, quindi sono utilizzabili in CI
 ├── config/
 │   └── settings.py         # Configurazione centralizzata
 ├── data/
-│   ├── loader.py           # Caricamento e normalizzazione DB
-│   ├── preprocessor.py     # Standardizzazione terapia
-│   └── therapy_drugs.py    # Dizionario farmaci italiani
+│   ├── loader.py           # caricamento e whitelist colonne per step
+│   ├── biomarkers.py       # status, affidabilità, ATN e concordanza deterministici
+│   ├── preprocessor.py     # standardizzazione terapia
+│   └── therapy_drugs.py    # dizionario farmaci italiani
 ├── frontend/               # React + TypeScript + TailwindCSS
 │   └── src/
 │       ├── pages/          # Dashboard, Analisi, Batch, Risultati...
 │       ├── api/client.ts   # Client API tipizzato
 │       └── types/index.ts  # TypeScript interfaces
 ├── llm/
-│   ├── ollama_client.py    # Client HTTP Ollama
-│   └── prompt_builder.py   # Template prompt per 3 step
+│   ├── ollama_client.py    # client HTTP, seed, tempi/token e parser tracciato
+│   ├── output_schemas.py   # JSON Schema vincolanti per i tre step
+│   └── prompt_builder.py   # template prompt per 3 step
 ├── pipeline/
 │   ├── step_runner.py      # esecutore pipeline 3-step
 │   ├── validator.py        # normalizzazione e coerenza dell'output diagnostico
@@ -134,14 +144,13 @@ un exit code diverso da zero in caso di problema, quindi sono utilizzabili in CI
 │   ├── vector_store.py        # gestione ChromaDB
 │   └── retriever.py           # retrieval ibrido BM25 + semantico (RRF)
 ├── scripts/
-│   ├── build_rag.py           # build/ispezione indice RAG
-│   ├── verify_prompts.py      # verifica completezza input dei prompt
-│   ├── test_validator.py      # test di regressione del validatore
-│   ├── audit_leakage.py       # audit: la diagnosi non raggiunge il modello
-│   ├── check_reference_values.py  # cut-off vs foglio dei clinici
-│   ├── smoke_pipeline.py      # test end-to-end della pipeline
-│   └── extract_unidentified_drugs.py  # lista farmaci da mappare
+│   ├── build_rag.py, smoke_pipeline.py, test_reproducibility.py
+│   ├── test_validator.py, test_biomarkers.py, test_json_parser.py
+│   ├── test_evaluator.py, verify_prompts.py
+│   ├── audit_leakage.py, audit_dataset.py, check_reference_values.py
+│   └── extract_unidentified_drugs.py
 ├── Documenti_/             # knowledge base PDF (gitignored)
+├── Class_DX.pdf            # schema clinico delle classi, non indicizzato
 ├── results/                # risultati batch e individuali (gitignored)
 ├── chroma_db/              # vector store (gitignored)
 ├── environment.yml         # ambiente conda
@@ -156,7 +165,9 @@ un exit code diverso da zero in caso di problema, quindi sono utilizzabili in CI
 L'informazione è **cumulativa**: come un clinico che richiede esami via via più
 invasivi, ogni step vede tutto ciò che era disponibile ai precedenti più il
 ragionamento già prodotto e i nuovi dati del proprio livello. Il quadro clinico
-non viene mai dimenticato.
+non viene mai dimenticato. Il bottone frontend “Esegui Pipeline”, il batch API e
+la futura evaluation chiamano tutti lo stesso `run_full_pipeline`: non esistono
+orchestrazioni parallele con logiche differenti.
 
 ### Step 1 — Valutazione clinica + knowledge base
 
@@ -177,7 +188,7 @@ riferimento. Output: diagnosi primaria e tutte le differenziali con probabilità
 | Colonne aggiunte | Ruolo |
 |---|---|
 | `Plasma_Ab4240`, `plasma_ptau217`, `plasma_pt181`, `plasma_NfL` | biomarcatori di neurodegenerazione |
-| `Creatinina`, `AST`, `ALT`, `eGFR_2021` | attendibilità dei biomarcatori: un'alterazione epatica o renale li rende non interpretabili |
+| `Creatinina`, `AST`, `ALT`, `eGFR_2021` | possibili confondenti: un'alterazione genera un avviso di cautela, senza invalidare automaticamente tutto il plasma |
 
 Riceve inoltre il quadro clinico completo dello Step 1 e il suo **output
 integrale** (diagnosi, distribuzione di probabilità, ragionamento per ogni
@@ -188,11 +199,14 @@ di interpretare, poi aggiorna le probabilità.
 
 | Colonne aggiunte | Ruolo |
 |---|---|
-| `CSF_Ab42`, `CSF_Ab40`, `CSF_Ab4240`, `CSF_ttau`, `CSF_ptau`, `CSF_NfL` | gold standard diagnostico |
+| `CSF_Ab42`, `CSF_Ab40`, `CSF_Ab4240`, `CSF_ttau`, `CSF_ptau`, `CSF_NfL` | evidenza biologica prioritaria sulla presenza o assenza di patologia Alzheimer |
 
 Riceve il quadro clinico, l'**output integrale degli Step 1 e 2**, il plasma e
-gli indici epato-renali. Produce diagnosi finale, classificazione ATN e
-concordanza plasma-liquor. La concordanza con `Diagnosi_CODIFICATA` è calcolata
+gli indici epato-renali. Il codice calcola deterministicamente status dei
+marcatori, profilo ATN e concordanza plasma-liquor; il modello interpreta questi
+risultati senza ricalcolare cut-off. La normalità dei biomarcatori AD non dimostra
+automaticamente quale demenza alternativa sia corretta e la positività non
+esclude copatologie. La concordanza con `Diagnosi_CODIFICATA` è calcolata
 **a valle**, da `pipeline/evaluator.py`: il modello non la vede mai.
 
 Gli step 2 e 3 girano sempre: se i biomarcatori mancano, il modello conferma la
@@ -203,27 +217,57 @@ del percorso diagnostico, non come conclusione da difendere.
 
 ### Ordine di ragionamento e coerenza dell'output
 
-Lo schema JSON impone al modello di **ragionare prima di etichettare**: il campo
-`diagnostic_reasoning` precede `primary_diagnosis`, e dentro ogni oggetto
-diagnosi `reasoning` precede `diagnosis`. La generazione è autoregressiva: con
-l'ordine opposto il modello sceglie la diagnosi prima di analizzarla e può poi
-contraddirsi nel testo del ragionamento.
+Ollama riceve un vero JSON Schema. Il modello deve prima produrre
+`diagnostic_reasoning`, poi un oggetto `diagnosis_assessments` con **otto chiavi
+fisse**, una per classe, e solo alla fine `primary_diagnosis`. Questo impedisce
+omissioni, duplicati e codici combinati tipici degli array liberi nei modelli
+7–9B.
 
-Ogni risposta passa da `pipeline/validator.py`, che normalizza i codici
-(`Mixed`→`MIXED`, `AD PPA`→`AD-PPA`, `FTD|PD` in due voci) e rileva le
-incoerenze residue: diagnosi primaria che non è quella col punteggio più alto,
-punteggi che non sommano a 1, una diagnosi `ESCLUSA` con probabilità residua, la
-primaria ripetuta tra le differenziali, diagnosi non valutate.
+I confidence score grezzi sono conservati in `model_result` e come
+`reported_confidence_score`. Poiché i modelli non rispettano sempre la somma 1,
+il validatore produce anche una distribuzione normalizzata per interfaccia e
+analisi, senza modificare l'argmax. Le categorie ALTA/MEDIA/BASSA/ESCLUSA sono
+derivate deterministicamente dagli score normalizzati, non riscritte dal
+modello.
 
-**Il validatore segnala, non corregge.** Sostituire la diagnosi scelta dal
-modello con quella a punteggio più alto falsificherebbe proprio il dato che lo
-studio misura. Gli avvisi finiscono in `result.consistency.warnings`, vengono
-mostrati nell'interfaccia con un riquadro di allerta e conteggiati nelle metriche
-di batch (`inconsistent_outputs`), così un'accuracy calcolata su risposte
-contraddittorie è riconoscibile.
+**Il validatore segnala, non corregge la diagnosi.** Se la primaria dichiarata
+non coincide con l'argmax, entrambe vengono conservate e compare un alert. Sono
+tracciati anche somma grezza, citazioni non letterali, JSON riparati e output
+invalidi. L'accuracy principale è intention-to-evaluate: un output invalido
+resta nel denominatore; `valid_output_accuracy` è riportata separatamente.
 
-Se il modello restituisce una risposta priva di diagnosi primaria, lo step viene
-ripetuto una volta (`LLM_RETRIES_ON_INVALID`) prima di considerarlo perso.
+Per lo studio `LLM_RETRIES_ON_INVALID=0`: ritentare fino a ottenere una risposta
+valida selezionerebbe artificialmente gli output migliori. Ogni risposta salva
+prompt esatti, payload, query e fonti RAG, risposta grezza, JSON originario,
+risultato normalizzato, seed, opzioni, token e tempi Ollama.
+
+---
+
+## Protocollo previsto per l'evaluation headless
+
+I tre modelli dello studio sono `qwen3.5:latest`, `ministral-3:8b` e
+`llama3.1:8b`, eseguiti un modello per processo. Per ogni modello: 106 pazienti,
+20–30 run, tre step concatenati, con una lista prefissata di seed identica tra i
+modelli. Il test su Qwen ha verificato che stesso prompt + stesso seed produce
+output byte-per-byte identico e che seed diversi producono output diversi. Una configurazione da 30 run richiede 3.180 pipeline e 9.540 chiamate
+LLM per modello.
+
+La futura CLI importerà direttamente `run_full_pipeline`: non conterrà una copia
+dei prompt o della logica applicativa. I bundle RAG saranno precomputati una
+volta per paziente e verificati via SHA-256, evitando centinaia di migliaia di
+embedding identici senza cambiare il prompt ricevuto dal modello.
+
+JSONL sarà il formato autorevole, append-only e ripristinabile; Excel sarà una
+vista tabellare derivata. Oltre alle colonne richieste, verranno salvati seed,
+digest del modello, commit Git, hash dataset/KB, input e prompt esatti, output
+grezzo e parsato, warning, fonti/citazioni, token, tempi, completezza dei
+biomarcatori e status di parsing.
+
+Le metriche saranno separate: correttezza a ogni step, primo step corretto,
+correttezza persistente, errore corretto dal CSF, errore introdotto dal CSF e
+correttezza pre-CSF. Le run sono osservazioni ripetute annidate nei pazienti:
+intervalli di confidenza e confronti tra modelli dovranno essere calcolati a
+livello paziente, non trattando le 3.180 esecuzioni come pazienti indipendenti.
 
 ---
 
@@ -257,7 +301,23 @@ La distribuzione delle classi è fortemente sbilanciata:
 Su 106 pazienti, **AD è il 68%**: un modello che rispondesse sempre "AD"
 otterrebbe il 68% di accuracy. L'accuracy da sola non è informativa. Per questo
 `evaluator.py` riporta anche **Cohen's κ**, precision/recall/F1 per classe e la
-matrice di confusione, che sono le metriche da usare nelle conclusioni.
+matrice di confusione.
+
+La completezza è eterogenea: solo 29 pazienti hanno tutti e quattro i marker
+plasmatici, 6 non ne hanno nessuno; 40 hanno tutti i marker CSF e uno non ne ha
+nessuno. L'analisi pre-CSF deve quindi essere stratificata per disponibilità.
+`audit_dataset.py` segnala inoltre due valori estremi da validare col team:
+`T101 plasma_ptau217=87` (cut-off 0.21) e `T81 CSF_NfL=3501` (cut-off 300).
+
+`TERAPIA` è intenzionalmente inclusa ma può incorporare la precedente impressione
+clinica: Donepezil/Memantina possono indurre il modello a favorire AD. Questo
+possibile incorporation bias deve essere dichiarato e può essere studiato con
+un'analisi di sensibilità senza terapia.
+
+Resta da validare col neurologo la nomenclatura della classe `PD`: il database e
+il codice usano `PD`, mentre `Class_DX.pdf` descrive `PDD/DLB` come “Lewy body
+diseases spectrum”. Il codice non viene rinominato automaticamente per evitare
+di alterare il ground truth senza approvazione clinica.
 
 ---
 

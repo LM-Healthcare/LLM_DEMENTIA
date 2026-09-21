@@ -29,6 +29,7 @@ export const api = {
     patient_code: string
     step: number
     model: string
+    seed?: number | null
     step1_result?: object | null
     step2_result?: object | null
   }) => request<StepResult>('/analysis/step', {
@@ -36,7 +37,7 @@ export const api = {
     body: JSON.stringify(payload),
   }),
 
-  runPipeline: (payload: { patient_code: string; model: string }) =>
+  runPipeline: (payload: { patient_code: string; model: string; seed?: number | null }) =>
     request<PipelineResult>('/analysis/pipeline', {
       method: 'POST',
       body: JSON.stringify(payload),

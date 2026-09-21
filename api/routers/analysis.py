@@ -47,6 +47,7 @@ def run_single_step(req: RunStepRequest):
         child_store=state.child_store,
         step1_result=req.step1_result,
         step2_result=req.step2_result,
+        seed=req.seed,
     )
     return StepResult(**result)
 
@@ -62,6 +63,7 @@ def run_pipeline(req: RunPipelineRequest):
         model=req.model,
         parent_store=state.parent_store,
         child_store=state.child_store,
+        seed=req.seed,
     )
     results["ground_truth"] = gt
     results["patient_code"] = req.patient_code
@@ -76,11 +78,11 @@ async def run_batch(req: BatchRunRequest, background_tasks: BackgroundTasks):
 
     codes = req.patient_codes or get_all_codes(get_database())
 
-    background_tasks.add_task(_batch_task, codes, req.model, state)
+    background_tasks.add_task(_batch_task, codes, req.model, req.seed, state)
     return {"message": f"Batch avviato per {len(codes)} pazienti", "total": len(codes)}
 
 
-async def _batch_task(codes: list[str], model: str, state):
+async def _batch_task(codes: list[str], model: str, seed: int | None, state):
     state.batch_running = True
     state.batch_progress = {"current": 0, "total": len(codes), "status": "running", "errors": []}
 
@@ -118,6 +120,7 @@ async def _batch_task(codes: list[str], model: str, state):
                         model=model,
                         parent_store=state.parent_store,
                         child_store=state.child_store,
+                        seed=None if seed is None else seed + i * 10,
                     )
                 )
                 pipeline_results.append(result)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class PatientSummary(BaseModel):
@@ -35,6 +35,7 @@ class RunStepRequest(BaseModel):
     patient_code: str
     step: int
     model: str
+    seed: Optional[int] = None
     step1_result: Optional[dict] = None
     step2_result: Optional[dict] = None
 
@@ -42,10 +43,12 @@ class RunStepRequest(BaseModel):
 class RunPipelineRequest(BaseModel):
     patient_code: str
     model: str
+    seed: Optional[int] = None
 
 
 class BatchRunRequest(BaseModel):
     model: str
+    seed: Optional[int] = None
     patient_codes: Optional[list[str]] = None
 
 
@@ -71,7 +74,7 @@ class RagSource(BaseModel):
     chunk_id: str = ""
     retrieval_score: Optional[float] = None
     # Estratti esatti che hanno prodotto il match nel retrieval.
-    matched_quotes: list[str] = []
+    matched_quotes: list[str] = Field(default_factory=list)
     # Passaggio integrale citato: serve a verificare la fonte, non è troncato.
     text: str = ""
 
@@ -82,10 +85,17 @@ class StepResult(BaseModel):
     feasible: bool
     skip_reason: Optional[str]
     result: Optional[dict]
+    model_result: Optional[dict] = None
     raw_response: Optional[str]
+    parse_metadata: Optional[dict] = None
+    generation_metadata: Optional[dict] = None
+    generation_attempts: list[dict] = Field(default_factory=list)
+    model_input: Optional[dict] = None
     duration_s: float
     model_used: str
-    rag_sources: list[RagSource] = []
+    seed: Optional[int] = None
+    computed_biomarkers: Optional[dict] = None
+    rag_sources: list[RagSource] = Field(default_factory=list)
     prompt_chars: Optional[int] = None
 
 
@@ -95,6 +105,11 @@ class PipelineResult(BaseModel):
     step1: StepResult
     step2: StepResult
     step3: StepResult
+    model: Optional[str] = None
+    base_seed: Optional[int] = None
+    step_seeds: dict[int, Optional[int]] = Field(default_factory=dict)
+    rag_bundle_sha256: Optional[str] = None
+    input_availability: dict = Field(default_factory=dict)
     total_duration_s: float
 
 

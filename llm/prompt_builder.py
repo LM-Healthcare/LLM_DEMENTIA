@@ -23,6 +23,7 @@ from config.settings import (
     REFERENCE_VALUES_TEXT,
     reference_hint,
 )
+from data.biomarkers import format_biomarker_assessment
 from data.loader import CSF_BIOMARKER_COLS, PLASMA_BIOMARKER_COLS, SAFETY_LAB_COLS
 
 _DIAGNOSIS_LIST = "\n".join(f"  - {k}: {v}" for k, v in DIAGNOSIS_LABELS.items())
@@ -42,34 +43,25 @@ ISTRUZIONI GENERALI:
 - Se un dato è mancante, segnalalo nel ragionamento senza inventare valori
 - Rispondi ESCLUSIVAMENTE in formato JSON come specificato
 - Non includere testo fuori dal JSON nella risposta
-- IMPORTANTE: nel campo "diagnosis" usa SOLO il codice breve esatto dalla lista sopra (es. "VAD", "AD", "FTD", "PD"), NON il nome esteso della malattia
-- OBBLIGATORIO: in "differential_diagnoses" includi TUTTE le diagnosi possibili non scelte come primaria, ciascuna con confidence_score esplicito
+- In "diagnosis_assessments" valuta separatamente TUTTE le otto diagnosi usando le chiavi esatte dello schema.
+- Attribuisci a ogni diagnosi un confidence_score tra 0 e 1 e una motivazione specifica.
 
 ORDINE DI RAGIONAMENTO (vincolante):
-- Compila i campi NELL'ORDINE in cui appaiono nello schema. Il campo
-  "diagnostic_reasoning" viene PRIMA di qualsiasi verdetto: usalo per svolgere per
-  intero l'analisi differenziale, confrontando le ipotesi tra loro.
-- Scegli il codice di "primary_diagnosis" SOLO DOPO aver completato quell'analisi,
-  e deve essere la conclusione a cui l'analisi è arrivata.
-- Dentro ogni oggetto diagnosi il campo "reasoning" precede "diagnosis": motiva
-  prima, etichetta dopo.
+- Compila i campi nell'ordine dello schema: prima "diagnostic_reasoning", poi gli
+  otto "diagnosis_assessments", infine "primary_diagnosis".
+- Scegli "primary_diagnosis" solo dopo l'analisi e usa esclusivamente uno dei
+  codici brevi ammessi. Deve essere la chiave col confidence_score più alto.
 
 COERENZA NUMERICA (vincolante):
-- I confidence_score di primary_diagnosis + tutti i differential_diagnoses devono
-  sommare esattamente a 1.0.
-- primary_diagnosis DEVE essere la diagnosi con il confidence_score più alto: se
-  una differenziale ha un punteggio superiore, allora è quella la primaria.
-- Una diagnosi con probability "ESCLUSA" deve avere confidence_score 0.0.
-- I livelli di probabilità devono rispettare il punteggio: ALTA ≥ 0.5,
-  MEDIA 0.2-0.5, BASSA 0.01-0.2, ESCLUSA = 0.0.
-- Non ripetere la diagnosi primaria dentro "differential_diagnoses".
+- Gli otto confidence_score devono sommare esattamente a 1.0.
+- Non usare lo stesso punteggio per tutte le diagnosi: distribuisci la probabilità
+  in base all'evidenza disponibile.
+- Il sistema deriverà deterministicamente ALTA/MEDIA/BASSA/ESCLUSA dai punteggi;
+  non devi produrre queste etichette.
 
 COMPLETEZZA (vincolante):
-- Il JSON deve contenere TUTTI i campi dello schema. Non chiudere l'oggetto prima
-  di aver compilato "primary_diagnosis" e "differential_diagnoses": sono i campi
-  essenziali e la risposta senza di essi è inutilizzabile.
-- Tieni "diagnostic_reasoning" entro il limite indicato: un testo troppo lungo
-  rischia di far terminare la risposta prima dei campi obbligatori.
+- Il JSON deve contenere tutti i campi richiesti e tutte le otto chiavi di
+  "diagnosis_assessments". Tieni "diagnostic_reasoning" entro il limite indicato.
 """
 
 _JSON_SCHEMA_STEP1 = """
@@ -78,22 +70,17 @@ _JSON_SCHEMA_STEP1 = """
   "patient_code": "<codice>",
   "key_clinical_features": ["<feature 1>", "<feature 2>"],
   "diagnostic_reasoning": "<analisi differenziale in massimo 8 frasi: confronta le ipotesi tra loro PRIMA di scegliere. Chiudi indicando quale diagnosi risulta la più probabile>",
-  "primary_diagnosis": {
-    "reasoning": "<sintesi che giustifica la scelta, coerente con diagnostic_reasoning>",
-    "diagnosis": "<codice esatto dalla lista: AD|VAD|SCD|PD|FTD|MIXED|LATE|AD-PPA>",
-    "label": "<etichetta>",
-    "probability": "ALTA|MEDIA|BASSA",
-    "confidence_score": <0.0-1.0>
+  "diagnosis_assessments": {
+    "AD": {"reasoning": "<valutazione AD>", "confidence_score": <0.0-1.0>},
+    "AD-PPA": {"reasoning": "<valutazione AD-PPA>", "confidence_score": <0.0-1.0>},
+    "MIXED": {"reasoning": "<valutazione MIXED>", "confidence_score": <0.0-1.0>},
+    "VAD": {"reasoning": "<valutazione VAD>", "confidence_score": <0.0-1.0>},
+    "SCD": {"reasoning": "<valutazione SCD>", "confidence_score": <0.0-1.0>},
+    "LATE": {"reasoning": "<valutazione LATE>", "confidence_score": <0.0-1.0>},
+    "FTD": {"reasoning": "<valutazione FTD>", "confidence_score": <0.0-1.0>},
+    "PD": {"reasoning": "<valutazione PD>", "confidence_score": <0.0-1.0>}
   },
-  "differential_diagnoses": [
-    {
-      "reasoning": "<perché questa ipotesi è meno probabile della primaria>",
-      "diagnosis": "<codice>",
-      "label": "<etichetta>",
-      "probability": "ALTA|MEDIA|BASSA|ESCLUSA",
-      "confidence_score": <0.0-1.0>
-    }
-  ],
+  "primary_diagnosis": "<codice con confidence_score più alto>",
   "clinical_summary": "<riassunto clinico in 2-3 frasi>",
   "missing_information": ["<info mancante 1>"],
   "rag_sources_used": [1, 3],
@@ -119,35 +106,25 @@ _JSON_SCHEMA_STEP2 = """
 {
   "step": 2,
   "patient_code": "<codice>",
-  "biomarker_reliability": {
-    "renal_function_ok": true|false,
-    "hepatic_function_ok": true|false,
-    "biomarkers_reliable": true|false,
-    "reliability_notes": "<note>"
-  },
-  "plasma_biomarker_interpretation": {
-    "Plasma_Ab4240": {"value": <valore|null>, "status": "NORMALE|PATOLOGICO|MANCANTE", "interpretation": "<note>"},
-    "plasma_ptau217": {"value": <valore|null>, "status": "NORMALE|PATOLOGICO|MANCANTE", "interpretation": "<note>"},
-    "plasma_pt181": {"value": <valore|null>, "status": "NORMALE|PATOLOGICO|MANCANTE", "interpretation": "<note>"},
-    "plasma_NfL": {"value": <valore|null>, "status": "NORMALE|PATOLOGICO|MANCANTE", "interpretation": "<note>"}
+  "plasma_biomarker_reasoning": {
+    "Plasma_Ab4240": "<significato diagnostico dello status calcolato>",
+    "plasma_ptau217": "<significato diagnostico dello status calcolato>",
+    "plasma_pt181": "<significato diagnostico dello status calcolato>",
+    "plasma_NfL": "<significato diagnostico dello status calcolato>",
+    "epato_renal_reliability": "<come i confondenti calcolati influenzano l'interpretazione>"
   },
   "diagnostic_reasoning": "<analisi differenziale aggiornata in massimo 8 frasi: come i biomarcatori plasmatici modificano ciascuna ipotesi, PRIMA di scegliere la primaria. Chiudi indicando la diagnosi più probabile>",
-  "primary_diagnosis": {
-    "reasoning": "<sintesi che giustifica la scelta, coerente con diagnostic_reasoning>",
-    "diagnosis": "<codice>",
-    "label": "<etichetta>",
-    "probability": "ALTA|MEDIA|BASSA",
-    "confidence_score": <0.0-1.0>
+  "diagnosis_assessments": {
+    "AD": {"reasoning": "<valutazione AD>", "confidence_score": <0.0-1.0>},
+    "AD-PPA": {"reasoning": "<valutazione AD-PPA>", "confidence_score": <0.0-1.0>},
+    "MIXED": {"reasoning": "<valutazione MIXED>", "confidence_score": <0.0-1.0>},
+    "VAD": {"reasoning": "<valutazione VAD>", "confidence_score": <0.0-1.0>},
+    "SCD": {"reasoning": "<valutazione SCD>", "confidence_score": <0.0-1.0>},
+    "LATE": {"reasoning": "<valutazione LATE>", "confidence_score": <0.0-1.0>},
+    "FTD": {"reasoning": "<valutazione FTD>", "confidence_score": <0.0-1.0>},
+    "PD": {"reasoning": "<valutazione PD>", "confidence_score": <0.0-1.0>}
   },
-  "differential_diagnoses": [
-    {
-      "reasoning": "<perché questa ipotesi è meno probabile della primaria>",
-      "diagnosis": "<codice>",
-      "label": "<etichetta>",
-      "probability": "ALTA|MEDIA|BASSA|ESCLUSA",
-      "confidence_score": <0.0-1.0>
-    }
-  ],
+  "primary_diagnosis": "<codice con confidence_score più alto>",
   "update_from_step1": "<come i biomarcatori hanno modificato la valutazione precedente>",
   "clinical_summary": "<riassunto aggiornato>"
 }"""
@@ -156,38 +133,28 @@ _JSON_SCHEMA_STEP3 = """
 {
   "step": 3,
   "patient_code": "<codice>",
-  "biomarker_reliability": {
-    "renal_function_ok": true|false,
-    "hepatic_function_ok": true|false,
-    "biomarkers_reliable": true|false,
-    "reliability_notes": "<note>"
+  "csf_biomarker_reasoning": {
+    "CSF_Ab42": "<significato diagnostico dello status calcolato>",
+    "CSF_Ab40": "<ruolo come denominatore del rapporto>",
+    "CSF_Ab4240": "<significato diagnostico dello status calcolato>",
+    "CSF_ttau": "<significato diagnostico dello status calcolato>",
+    "CSF_ptau": "<significato diagnostico dello status calcolato>",
+    "CSF_NfL": "<significato diagnostico dello status calcolato>"
   },
-  "csf_biomarker_interpretation": {
-    "CSF_Ab42": {"value": <valore|null>, "status": "NORMALE|PATOLOGICO|MANCANTE", "interpretation": "<note>"},
-    "CSF_Ab4240": {"value": <valore|null>, "status": "NORMALE|PATOLOGICO|MANCANTE", "interpretation": "<note>"},
-    "CSF_ttau": {"value": <valore|null>, "status": "NORMALE|PATOLOGICO|MANCANTE", "interpretation": "<note>"},
-    "CSF_ptau": {"value": <valore|null>, "status": "NORMALE|PATOLOGICO|MANCANTE", "interpretation": "<note>"},
-    "CSF_NfL": {"value": <valore|null>, "status": "NORMALE|PATOLOGICO|MANCANTE", "interpretation": "<note>"}
-  },
-  "at_profile": "<A+T+N+ | A+T-N+ | A-T-N+ | ... (classificazione ATN)>",
-  "plasma_csf_concordance": "<concordanza o discordanza tra plasma e liquor, con interpretazione>",
+  "atn_interpretation": "<interpretazione clinica del profilo ATN già calcolato dal sistema>",
+  "plasma_csf_interpretation": "<interpretazione della concordanza già calcolata dal sistema>",
   "diagnostic_reasoning": "<analisi differenziale finale in massimo 8 frasi: come il profilo ATN modifica ciascuna ipotesi, PRIMA di scegliere la primaria. Chiudi indicando la diagnosi più probabile>",
-  "primary_diagnosis": {
-    "reasoning": "<sintesi che giustifica la scelta, coerente con diagnostic_reasoning>",
-    "diagnosis": "<codice>",
-    "label": "<etichetta>",
-    "probability": "ALTA|MEDIA|BASSA",
-    "confidence_score": <0.0-1.0>
+  "diagnosis_assessments": {
+    "AD": {"reasoning": "<valutazione AD>", "confidence_score": <0.0-1.0>},
+    "AD-PPA": {"reasoning": "<valutazione AD-PPA>", "confidence_score": <0.0-1.0>},
+    "MIXED": {"reasoning": "<valutazione MIXED>", "confidence_score": <0.0-1.0>},
+    "VAD": {"reasoning": "<valutazione VAD>", "confidence_score": <0.0-1.0>},
+    "SCD": {"reasoning": "<valutazione SCD>", "confidence_score": <0.0-1.0>},
+    "LATE": {"reasoning": "<valutazione LATE>", "confidence_score": <0.0-1.0>},
+    "FTD": {"reasoning": "<valutazione FTD>", "confidence_score": <0.0-1.0>},
+    "PD": {"reasoning": "<valutazione PD>", "confidence_score": <0.0-1.0>}
   },
-  "differential_diagnoses": [
-    {
-      "reasoning": "<perché questa ipotesi è meno probabile della primaria>",
-      "diagnosis": "<codice>",
-      "label": "<etichetta>",
-      "probability": "ALTA|MEDIA|BASSA|ESCLUSA",
-      "confidence_score": <0.0-1.0>
-    }
-  ],
+  "primary_diagnosis": "<codice con confidence_score più alto>",
   "final_clinical_summary": "<sintesi diagnostica completa>",
   "update_from_step2": "<come il liquor ha modificato la valutazione>"
 }"""
@@ -295,8 +262,15 @@ def _csf_block(patient: dict) -> str:
 def _diagnosis_line(entry: dict, marker: str = "") -> str:
     score = entry.get("confidence_score")
     score_str = f"{score:.2f}" if isinstance(score, (int, float)) else "?"
+    probability = entry.get("probability")
+    if not probability and isinstance(score, (int, float)):
+        probability = (
+            "ESCLUSA" if score <= 0.001 else
+            "BASSA" if score < 0.2 else
+            "MEDIA" if score < 0.5 else "ALTA"
+        )
     head = (f"  - {entry.get('diagnosis', '?')} ({entry.get('label', '?')}): "
-            f"{entry.get('probability', '?')} | score={score_str}{marker}")
+            f"{probability or '?'} | score={score_str}{marker}")
     reasoning = (entry.get("reasoning") or "").strip()
     return f"{head}\n      motivazione: {reasoning}" if reasoning else head
 
@@ -311,11 +285,37 @@ def _step_output_block(step: int, result: dict) -> str:
 
     primary = result.get("primary_diagnosis", {}) or {}
     differentials = result.get("differential_diagnoses", []) or []
+    assessments = result.get("diagnosis_assessments")
+    if isinstance(primary, str) and isinstance(assessments, dict):
+        primary_code = primary
+        entries = {
+            code: {
+                "diagnosis": code,
+                "label": DIAGNOSIS_LABELS[code],
+                "reasoning": (assessments.get(code) or {}).get("reasoning", ""),
+                "confidence_score": (assessments.get(code) or {}).get("confidence_score"),
+            }
+            for code in DIAGNOSIS_LABELS
+        }
+        primary = entries.get(primary_code, {"diagnosis": primary_code})
+        differentials = [entry for code, entry in entries.items() if code != primary_code]
 
-    lines = [f"=== OUTPUT INTEGRALE STEP {step} ===",
-             "Distribuzione diagnostica prodotta:",
-             _diagnosis_line(primary, "  [PRIMARIA]")]
+    lines = [f"=== OUTPUT INTEGRALE STEP {step} ==="]
+    if result.get("diagnostic_reasoning"):
+        lines.append(f"Analisi differenziale globale: {result['diagnostic_reasoning']}")
+    lines.extend([
+        "Distribuzione diagnostica prodotta:",
+        _diagnosis_line(primary, "  [PRIMARIA]"),
+    ])
     lines.extend(_diagnosis_line(d) for d in differentials)
+
+    if result.get("rag_sources_used"):
+        lines.append(f"Fonti RAG usate: {result['rag_sources_used']}")
+    for evidence in result.get("rag_evidence") or []:
+        lines.append(
+            f"  Fonte {evidence.get('source_index')}: \"{evidence.get('quote', '')}\" — "
+            f"{evidence.get('relevance', '')}"
+        )
 
     summary = result.get("clinical_summary") or result.get("final_clinical_summary")
     if summary:
@@ -357,6 +357,16 @@ def _step_output_block(step: int, result: dict) -> str:
         if parts:
             lines.append(f"Interpretazione plasma allo step 2: {', '.join(parts)}")
 
+    for key, label in (
+        ("plasma_biomarker_reasoning", "Ragionamento sui biomarcatori plasmatici"),
+        ("csf_biomarker_reasoning", "Ragionamento sui biomarcatori liquorali"),
+        ("atn_interpretation", "Interpretazione ATN"),
+        ("plasma_csf_interpretation", "Interpretazione concordanza plasma-liquor"),
+    ):
+        value = result.get(key)
+        if value:
+            lines.append(f"{label}: {value}")
+
     return "\n".join(lines)
 
 
@@ -365,12 +375,12 @@ Se contraddicono la diagnosi dello step 1, DEVI aggiornare le probabilità in mo
 Non cercare di confermare la valutazione precedente: il ragionamento dello step 1 ti è fornito come
 documentazione del percorso diagnostico, non come conclusione da difendere. Rivaluta TUTTE le diagnosi."""
 
-_ANTI_ANCHORING_STEP3 = """⚠ ISTRUZIONE CRITICA: i biomarcatori liquorali (CSF) sono il GOLD STANDARD diagnostico per le demenze
-e hanno PESO PRIORITARIO su qualsiasi valutazione precedente.
-Se il profilo ATN contraddice la diagnosi corrente, DEVI correggerla con alta fiducia.
-Gli output degli step 1 e 2 ti sono forniti per intero come storia del percorso diagnostico, non come
-conclusione da confermare: rivaluta TUTTE le diagnosi in modo indipendente.
-Un profilo A+T+N+ esclude quasi certamente le diagnosi non-AD."""
+_ANTI_ANCHORING_STEP3 = """⚠ ISTRUZIONE CRITICA: i biomarcatori liquorali forniscono evidenza biologica prioritaria sulla presenza o assenza di patologia Alzheimer, ma non identificano da soli tutte le cause di demenza.
+Se il profilo ATN contraddice la diagnosi corrente, aggiorna le probabilità in modo sostanziale.
+Gli output degli step 1 e 2 ti sono forniti come storia del percorso diagnostico, non come conclusione
+da confermare: rivaluta TUTTE le diagnosi. Un profilo AD-positivo può coesistere con patologia
+vascolare o altre copatologie; un profilo AD-negativo riduce la probabilità di AD ma non dimostra
+automaticamente quale diagnosi alternativa sia corretta."""
 
 
 # ─── Costruttori dei prompt ───────────────────────────────────────────────────
@@ -402,6 +412,7 @@ def build_step2_prompt(
     patient: dict,
     step1_result: dict,
     terapia_formatted: str,
+    biomarker_assessment: dict,
 ) -> tuple[str, str]:
     """(system, user) per lo Step 2: quadro clinico + step 1 integrale + plasma."""
     system = _SYSTEM_BASE + f"\n\nSCHEMA JSON ATTESO (Step 2):\n{_JSON_SCHEMA_STEP2}"
@@ -415,6 +426,8 @@ def build_step2_prompt(
 {_plasma_block(patient)}
 
 {_safety_block(patient)}
+
+{format_biomarker_assessment(biomarker_assessment, 2)}
 
 ---
 Aggiorna la valutazione diagnostica integrando i biomarcatori plasmatici con il quadro clinico.
@@ -430,6 +443,7 @@ def build_step3_prompt(
     patient: dict,
     step2_result: dict,
     terapia_formatted: str,
+    biomarker_assessment: dict,
     step1_result: dict | None = None,
 ) -> tuple[str, str]:
     """(system, user) per lo Step 3: quadro clinico + step 1 e 2 integrali + plasma + CSF."""
@@ -451,9 +465,11 @@ def build_step3_prompt(
 
 {_csf_block(patient)}
 
+{format_biomarker_assessment(biomarker_assessment, 3)}
+
 ---
-Integra i biomarcatori liquorali (gold standard diagnostico) con il quadro clinico e i dati plasmatici.
-Classifica il profilo ATN (Amyloid/Tau/Neurodegeneration) e valuta la concordanza plasma-liquor.
+Integra l'evidenza biologica liquorale con il quadro clinico e i dati plasmatici.
+Riporta il profilo ATN calcolato dal sistema e valuta la concordanza plasma-liquor senza ricalcolare i cut-off.
 Fornisci la diagnosi finale con il massimo grado di certezza possibile.
 Se tutti i biomarcatori CSF risultano {_MISSING}, conferma la diagnosi dello Step 2 mantenendo le stesse
 probabilità e specifica nel reasoning che l'assenza di dati non permette aggiornamenti.

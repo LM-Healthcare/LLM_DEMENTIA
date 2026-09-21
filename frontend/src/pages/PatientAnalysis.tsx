@@ -357,8 +357,15 @@ function StepCard({
               {primary.confidence_score != null && (
                 <div className="mt-2">
                   <div className="flex justify-between text-xs text-slate-400 mb-1">
-                    <span>Confidence</span>
-                    <span>{(primary.confidence_score * 100).toFixed(0)}%</span>
+                    <span>Confidence normalizzata</span>
+                    <span>
+                      {(primary.confidence_score * 100).toFixed(0)}%
+                      {primary.reported_confidence_score != null && (
+                        <span className="ml-1 text-slate-300" title="Score grezzo prodotto dal modello">
+                          (raw {primary.reported_confidence_score.toFixed(2)})
+                        </span>
+                      )}
+                    </span>
                   </div>
                   <div className="h-1.5 bg-slate-200 rounded-full">
                     <div className="h-1.5 rounded-full transition-all" style={{ width: `${primary.confidence_score * 100}%`, backgroundColor: color }} />
@@ -473,8 +480,8 @@ export default function PatientAnalysis() {
         patient_code: selected.codice,
         step,
         model,
-        step1_result: step >= 2 ? step1?.result ?? null : null,
-        step2_result: step >= 3 ? step2?.result ?? null : null,
+        step1_result: step >= 2 ? step1?.model_result ?? step1?.result ?? null : null,
+        step2_result: step >= 3 ? step2?.model_result ?? step2?.result ?? null : null,
       })
       if (step === 1) setStep1(res)
       if (step === 2) setStep2(res)
@@ -512,17 +519,11 @@ export default function PatientAnalysis() {
     setPipelineRunning(true)
     setStep1(null); setStep2(null); setStep3(null)
     try {
-      setLoading({ 1: true, 2: false, 3: false })
-      const r1 = await api.runStep({ patient_code: selected.codice, step: 1, model, step1_result: null, step2_result: null })
-      setStep1(r1)
-      setLoading({ 1: false, 2: true, 3: false })
-
-      const r2 = await api.runStep({ patient_code: selected.codice, step: 2, model, step1_result: r1.result ?? null, step2_result: null })
-      setStep2(r2)
-      setLoading({ 1: false, 2: false, 3: true })
-
-      const r3 = await api.runStep({ patient_code: selected.codice, step: 3, model, step1_result: r1.result ?? null, step2_result: r2.result ?? null })
-      setStep3(r3)
+      setLoading({ 1: true, 2: true, 3: true })
+      const result = await api.runPipeline({ patient_code: selected.codice, model })
+      setStep1(result.step1)
+      setStep2(result.step2)
+      setStep3(result.step3)
     } finally {
       setLoading({ 1: false, 2: false, 3: false })
       setPipelineRunning(false)

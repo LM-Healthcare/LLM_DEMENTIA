@@ -57,9 +57,15 @@ export interface StepResult {
   feasible: boolean
   skip_reason: string | null
   result: StepOutput | null
+  model_result: Record<string, unknown> | null
   raw_response: string | null
+  parse_metadata?: Record<string, unknown> | null
+  generation_metadata?: Record<string, unknown> | null
+  generation_attempts?: Array<Record<string, unknown>>
+  model_input?: Record<string, unknown> | null
   duration_s: number
   model_used: string
+  seed?: number | null
   rag_sources: RagSource[]
   prompt_chars?: number | null
 }
@@ -69,6 +75,7 @@ export interface DiagnosisEntry {
   label: string
   probability: 'ALTA' | 'MEDIA' | 'BASSA' | 'ESCLUSA'
   confidence_score?: number
+  reported_confidence_score?: number
   reasoning: string
 }
 
@@ -94,25 +101,17 @@ export interface StepOutput {
   rag_sources_used?: number[]
   rag_evidence?: RagEvidence[]
   step1_limitations?: string
-  plasma_csf_concordance?: string
-  biomarker_reliability?: {
-    renal_function_ok: boolean
-    hepatic_function_ok: boolean
-    biomarkers_reliable: boolean
-    reliability_notes: string
-  }
-  plasma_biomarker_interpretation?: Record<string, BiomarkerEntry>
-  csf_biomarker_interpretation?: Record<string, BiomarkerEntry>
+  plasma_csf_concordance?: string | Record<string, unknown>
+  biomarker_reliability?: Record<string, unknown>
+  computed_biomarkers?: Record<string, unknown>
+  plasma_biomarker_reasoning?: Record<string, string>
+  csf_biomarker_reasoning?: Record<string, string>
+  atn_interpretation?: string
+  plasma_csf_interpretation?: string
   at_profile?: string
   update_from_step1?: string
   update_from_step2?: string
   error?: string
-}
-
-export interface BiomarkerEntry {
-  value: number | null
-  status: 'NORMALE' | 'PATOLOGICO' | 'MANCANTE'
-  interpretation: string
 }
 
 export interface PipelineResult {
@@ -121,6 +120,11 @@ export interface PipelineResult {
   step1: StepResult
   step2: StepResult
   step3: StepResult
+  model?: string | null
+  base_seed?: number | null
+  step_seeds?: Record<string, number | null>
+  rag_bundle_sha256?: string | null
+  input_availability?: Record<string, number>
   total_duration_s: number
 }
 

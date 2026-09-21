@@ -50,6 +50,13 @@ def extract_confidence(step_result: dict) -> Optional[float]:
     return result.get("primary_diagnosis", {}).get("confidence_score", None)
 
 
+def extract_reported_confidence(step_result: dict) -> Optional[float]:
+    if step_result is None or not step_result.get("feasible"):
+        return None
+    result = step_result.get("result") or {}
+    return (result.get("primary_diagnosis") or {}).get("reported_confidence_score")
+
+
 def concordance_record(llm_diagnosis: Optional[str], ground_truth: str) -> Optional[bool]:
     """True se la diagnosi LLM coincide col ground truth, None se non processabile."""
     if llm_diagnosis is None:
@@ -93,22 +100,40 @@ def evaluate_batch(
             sr = pr.get(key, {})
             llm_diag = extract_llm_diagnosis(sr)
             conf = extract_confidence(sr)
+            reported_conf = extract_reported_confidence(sr)
             concord = concordance_record(llm_diag, gt)
             feasible = sr.get("feasible", False)
 
             consistency = extract_consistency(sr)
             record[f"step{step}_prediction"] = llm_diag
             record[f"step{step}_confidence"] = conf
+            record[f"step{step}_reported_confidence"] = reported_conf
             record[f"step{step}_concordant"] = concord
             record[f"step{step}_feasible"] = feasible
             record[f"step{step}_duration_s"] = sr.get("duration_s", 0)
+            parse_metadata = sr.get("parse_metadata") or {}
             record[f"step{step}_consistency_warnings"] = consistency.get("warnings", [])
             record[f"step{step}_primary_is_argmax"] = consistency.get("primary_is_argmax")
+            record[f"step{step}_parse_status"] = parse_metadata.get("status")
+            record[f"step{step}_parse_repaired"] = bool(parse_metadata.get("repaired"))
 
             if feasible and llm_diag is not None:
                 step_preds[step].append(llm_diag.upper())
                 step_truths[step].append(canonical_code(gt).upper())
 
+        correct = [record.get(f"step{step}_concordant") is True for step in (1, 2, 3)]
+        first_correct = next((step for step, is_correct in enumerate(correct, 1) if is_correct), None)
+        availability = pr.get("input_availability") or {}
+        record.update({
+            "first_correct_step": first_correct,
+            "correct_before_csf": correct[0] or correct[1],
+            "step2_pre_csf_correct": correct[1],
+            "sustained_correct_from_step1": all(correct),
+            "sustained_correct_from_step2": correct[1] and correct[2],
+            "csf_corrected_error": not correct[1] and correct[2],
+            "csf_introduced_error": correct[1] and not correct[2],
+            **availability,
+        })
         records.append(record)
 
     metrics_per_step = {}
@@ -116,9 +141,18 @@ def evaluate_batch(
         preds = step_preds[step]
         truths = step_truths[step]
         if preds:
-            metrics_per_step[f"step{step}"] = _compute_metrics(preds, truths)
+            metrics_per_step[f"step{step}"] = _compute_metrics(
+                preds, truths, total_cases=len(records)
+            )
         else:
-            metrics_per_step[f"step{step}"] = {"error": "Nessuna predizione disponibile"}
+            metrics_per_step[f"step{step}"] = {
+                "n_total": len(records),
+                "n_evaluated": 0,
+                "n_invalid": len(records),
+                "accuracy": 0.0,
+                "valid_output_accuracy": None,
+                "error": "Nessuna predizione disponibile",
+            }
 
     return {
         "records": records,
@@ -128,11 +162,15 @@ def evaluate_batch(
     }
 
 
-def _compute_metrics(predictions: list[str], truths: list[str]) -> dict:
+def _compute_metrics(
+    predictions: list[str], truths: list[str], total_cases: int | None = None
+) -> dict:
     all_classes = sorted(set(predictions + truths))
     n = len(predictions)
+    total = n if total_cases is None else total_cases
     correct = sum(p == t for p, t in zip(predictions, truths))
-    accuracy = correct / n if n > 0 else 0.0
+    valid_accuracy = correct / n if n > 0 else 0.0
+    accuracy = correct / total if total > 0 else 0.0
 
     per_class: dict[str, dict] = {}
     for cls in all_classes:
@@ -157,8 +195,11 @@ def _compute_metrics(predictions: list[str], truths: list[str]) -> dict:
         confusion[t][p] += 1
 
     return {
+        "n_total": total,
         "n_evaluated": n,
+        "n_invalid": total - n,
         "accuracy": round(accuracy, 4),
+        "valid_output_accuracy": round(valid_accuracy, 4),
         "cohen_kappa": round(kappa, 4),
         "per_class": per_class,
         "confusion_matrix": {k: dict(v) for k, v in confusion.items()},
@@ -190,6 +231,8 @@ def _build_summary(records: list[dict], metrics: dict) -> dict:
             "feasible_patients": feasible,
             "concordant_patients": concordant,
             "accuracy": m.get("accuracy", 0),
+            "valid_output_accuracy": m.get("valid_output_accuracy"),
+            "invalid_outputs": m.get("n_invalid", total),
             "cohen_kappa": m.get("cohen_kappa", 0),
             # Quante risposte erano internamente contraddittorie: un'accuracy
             # calcolata su output incoerenti va interpretata con cautela.
@@ -199,8 +242,29 @@ def _build_summary(records: list[dict], metrics: dict) -> dict:
             "patients_with_warnings": sum(
                 1 for r in records if r.get(f"{key}_consistency_warnings")
             ),
+            "repaired_outputs": sum(
+                1 for r in records if r.get(f"{key}_parse_repaired")
+            ),
         }
 
+    summary["diagnostic_timing"] = {
+        "correct_at_step1": sum(1 for r in records if r.get("step1_concordant") is True),
+        "correct_at_step2": sum(1 for r in records if r.get("step2_concordant") is True),
+        "correct_at_step3": sum(1 for r in records if r.get("step3_concordant") is True),
+        "correct_before_csf": sum(1 for r in records if r.get("correct_before_csf")),
+        "sustained_correct_from_step1": sum(
+            1 for r in records if r.get("sustained_correct_from_step1")
+        ),
+        "sustained_correct_from_step2": sum(
+            1 for r in records if r.get("sustained_correct_from_step2")
+        ),
+        "csf_corrected_error": sum(1 for r in records if r.get("csf_corrected_error")),
+        "csf_introduced_error": sum(1 for r in records if r.get("csf_introduced_error")),
+        "first_correct_step": {
+            str(step): sum(1 for r in records if r.get("first_correct_step") == step)
+            for step in (1, 2, 3)
+        },
+    }
     return summary
 
 

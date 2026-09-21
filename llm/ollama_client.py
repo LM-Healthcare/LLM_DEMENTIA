@@ -41,6 +41,15 @@ def get_model_names() -> list[str]:
     return [m["name"] for m in list_models()]
 
 
+def get_model_info(model_name: str) -> dict | None:
+    requested = model_name.lower()
+    for model in list_models():
+        name = str(model.get("name", "")).lower()
+        if name == requested or name.split(":")[0] == requested.split(":")[0]:
+            return model
+    return None
+
+
 def pull_model(model_name: str) -> Generator[str, None, None]:
     """
     Scarica un modello da Ollama. Yield di stringhe di stato.
@@ -70,42 +79,86 @@ def pull_model(model_name: str) -> Generator[str, None, None]:
         yield f"Errore: {e}"
 
 
-def generate(
+def generate_detailed(
     prompt: str,
     system: str = "",
     model: str = OLLAMA_MODEL,
     temperature: float = LLM_TEMPERATURE,
     max_tokens: int = LLM_MAX_TOKENS,
-) -> str:
-    """
-    Genera testo tramite Ollama /api/generate.
-    temperature bassa per risposta deterministica e clinicamente rigorosa.
-    """
+    seed: int | None = None,
+    output_schema: dict | None = None,
+) -> dict:
+    options = {
+        "temperature": temperature,
+        "num_predict": max_tokens,
+        "num_ctx": LLM_NUM_CTX,
+        "top_p": 0.9,
+        "repeat_penalty": 1.1,
+    }
+    if seed is not None:
+        options["seed"] = int(seed)
+
     payload = {
         "model": model,
         "prompt": prompt,
         "system": system,
         "stream": False,
         "think": False,
-        "format": "json",
-        "options": {
-            "temperature": temperature,
-            "num_predict": max_tokens,
-            "num_ctx": LLM_NUM_CTX,
-            "top_p": 0.9,
-            "repeat_penalty": 1.1,
-        },
+        "format": output_schema or "json",
+        "options": options,
+    }
+    request_metadata = {
+        "model": model,
+        "seed": seed,
+        "think": False,
+        "structured_output": output_schema is not None,
+        "options": options,
     }
     try:
         response = requests.post(
             f"{OLLAMA_BASE_URL}/api/generate", json=payload, timeout=LLM_TIMEOUT_S
         )
         response.raise_for_status()
-        return response.json().get("response", "")
+        data = response.json()
+        return {
+            "response": data.get("response", ""),
+            "error": None,
+            "request": request_metadata,
+            "ollama": {
+                key: value for key, value in data.items()
+                if key not in {"response", "context"}
+            },
+        }
     except requests.Timeout:
-        return _error_json(f"Timeout: nessuna risposta entro {LLM_TIMEOUT_S}s")
-    except Exception as e:
-        return _error_json(f"Errore Ollama: {e}")
+        message = f"Timeout: nessuna risposta entro {LLM_TIMEOUT_S}s"
+    except Exception as exc:
+        message = f"Errore Ollama: {exc}"
+    return {
+        "response": _error_json(message),
+        "error": message,
+        "request": request_metadata,
+        "ollama": {},
+    }
+
+
+def generate(
+    prompt: str,
+    system: str = "",
+    model: str = OLLAMA_MODEL,
+    temperature: float = LLM_TEMPERATURE,
+    max_tokens: int = LLM_MAX_TOKENS,
+    seed: int | None = None,
+    output_schema: dict | None = None,
+) -> str:
+    return generate_detailed(
+        prompt=prompt,
+        system=system,
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        seed=seed,
+        output_schema=output_schema,
+    )["response"]
 
 
 def _error_json(message: str) -> str:
@@ -117,36 +170,31 @@ def _error_json(message: str) -> str:
 _REPAIR_BACKTRACK_LIMIT = 400
 
 
-def _try_repair_json(text: str) -> Optional[dict]:
-    """
-    Ripara un JSON troncato chiudendo stringa e parentesi rimaste aperte.
-
-    Serve quando un modello esaurisce il budget di token a metà risposta: senza
-    questo recupero l'intero step viene perso. I delimitatori vanno chiusi
-    nell'ordine inverso di apertura, quindi si traccia la pila e non due
-    semplici contatori (che sbagliano l'ordine sulle strutture annidate).
-    """
+def _try_repair_json_detailed(text: str) -> tuple[Optional[dict], dict]:
     stack, in_string = _scan_delimiters(text)
     if not in_string and not stack:
-        return None
+        return None, {"discarded_chars": 0, "backtrack_steps": 0}
 
-    # Primo tentativo: chiudere quello che è rimasto aperto così com'è.
     candidate = _close_json(text)
     if candidate is not None:
-        return candidate
+        return candidate, {"discarded_chars": 0, "backtrack_steps": 0}
 
-    # Il taglio può cadere su un frammento non recuperabile (una chiave senza
-    # valore, un numero a metà): si arretra al delimitatore precedente e si
-    # riprova, scartando l'ultimo elemento incompleto.
     cut = len(text)
-    for _ in range(_REPAIR_BACKTRACK_LIMIT):
+    for step in range(1, _REPAIR_BACKTRACK_LIMIT + 1):
         cut = max(text.rfind(",", 0, cut), text.rfind("}", 0, cut), text.rfind("]", 0, cut))
         if cut <= 0:
             break
         candidate = _close_json(text[:cut])
         if candidate is not None:
-            return candidate
-    return None
+            return candidate, {
+                "discarded_chars": len(text) - cut,
+                "backtrack_steps": step,
+            }
+    return None, {"discarded_chars": len(text), "backtrack_steps": _REPAIR_BACKTRACK_LIMIT}
+
+
+def _try_repair_json(text: str) -> Optional[dict]:
+    return _try_repair_json_detailed(text)[0]
 
 
 def _scan_delimiters(text: str) -> tuple[list[str], bool]:
@@ -208,42 +256,65 @@ def _strip_markdown_fence(text: str) -> str:
     return text.strip()
 
 
-def parse_json_response(raw: str) -> dict:
-    """
-    Estrae il JSON dalla risposta del modello.
-    Gestisce: testo prima/dopo, blocchi <think> (Qwen3), markdown code fences.
-    """
+def parse_json_response_detailed(raw: str) -> dict:
+    metadata = {
+        "status": "error",
+        "repaired": False,
+        "source": None,
+        "raw_chars": len(raw or ""),
+        "cleaned_chars": 0,
+        "discarded_chars": 0,
+        "backtrack_steps": 0,
+    }
     if not raw or not raw.strip():
-        print("[LLM] Risposta vuota dal modello")
-        return {"error": "Risposta vuota dal modello", "raw_response": raw}
+        return {
+            "data": {"error": "Risposta vuota dal modello", "raw_response": raw},
+            "metadata": metadata,
+        }
 
-    cleaned = _strip_think_tags(raw)
-    cleaned = _strip_markdown_fence(cleaned)
+    cleaned = _strip_markdown_fence(_strip_think_tags(raw))
+    metadata["cleaned_chars"] = len(cleaned)
+    candidates: list[tuple[str, str]] = []
 
     start = cleaned.find("{")
     end = cleaned.rfind("}") + 1
-    if start == -1 or end == 0:
-        start = cleaned.find("[")
-        end = cleaned.rfind("]") + 1
-
     if start >= 0 and end > start:
-        json_str = cleaned[start:end]
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError:
-            repaired = _try_repair_json(json_str)
-            if repaired:
-                print(f"[LLM] JSON riparato da troncamento ({len(json_str)} chars)")
-                return repaired
+        candidates.append(("extracted", cleaned[start:end]))
+    candidates.append(("full", cleaned))
 
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        repaired = _try_repair_json(cleaned)
-        if repaired:
-            print(f"[LLM] JSON riparato da troncamento (full cleaned, {len(cleaned)} chars)")
-            return repaired
-        print(f"[LLM] Impossibile parsare JSON. Lunghezza risposta: {len(raw)} chars")
-        print(f"[LLM] Inizio (600 chars):\n{raw[:600]}")
-        print(f"[LLM] Fine (300 chars):\n{raw[-300:]}" if len(raw) > 600 else "")
-        return {"error": "Impossibile parsare JSON", "raw_response": raw}
+    seen: set[str] = set()
+    for source, candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            data = json.loads(candidate)
+            if isinstance(data, dict):
+                return {
+                    "data": data,
+                    "metadata": {**metadata, "status": "exact", "source": source},
+                }
+        except json.JSONDecodeError:
+            pass
+
+        repaired, repair_meta = _try_repair_json_detailed(candidate)
+        if repaired is not None:
+            return {
+                "data": repaired,
+                "metadata": {
+                    **metadata,
+                    **repair_meta,
+                    "status": "repaired",
+                    "repaired": True,
+                    "source": source,
+                },
+            }
+
+    return {
+        "data": {"error": "Impossibile parsare JSON", "raw_response": raw},
+        "metadata": metadata,
+    }
+
+
+def parse_json_response(raw: str) -> dict:
+    return parse_json_response_detailed(raw)["data"]

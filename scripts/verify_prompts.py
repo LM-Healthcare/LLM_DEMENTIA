@@ -25,6 +25,7 @@ if hasattr(sys.stdout, "buffer"):
 
 import pandas as pd
 
+from data.biomarkers import compute_biomarker_assessment
 from data.loader import (
     CSF_BIOMARKER_COLS,
     PLASMA_BIOMARKER_COLS,
@@ -119,9 +120,12 @@ def verify(record: dict, dump: int | None) -> bool:
 
     prompts = {
         1: build_step1_prompt(build_step_payload(record, 1, terapia["summary"]), rag_context, terapia_fmt),
-        2: build_step2_prompt(build_step_payload(record, 2, terapia["summary"]), FAKE_STEP1, terapia_fmt),
-        3: build_step3_prompt(build_step_payload(record, 3, terapia["summary"]), FAKE_STEP2,
-                              terapia_fmt, step1_result=FAKE_STEP1),
+        2: build_step2_prompt(
+            build_step_payload(record, 2, terapia["summary"]), FAKE_STEP1, terapia_fmt,
+            compute_biomarker_assessment(record, 2)),
+        3: build_step3_prompt(
+            build_step_payload(record, 3, terapia["summary"]), FAKE_STEP2, terapia_fmt,
+            compute_biomarker_assessment(record, 3), step1_result=FAKE_STEP1),
     }
 
     print(f"\nPaziente: {codice}")
@@ -135,6 +139,7 @@ def verify(record: dict, dump: int | None) -> bool:
 
         ok &= check("diagnosi ammesse + valori di riferimento", "VALORI DI RIFERIMENTO" in system)
         ok &= check("schema JSON dello step", f'"step": {step}' in system)
+        ok &= check("otto diagnosi a chiavi fisse", '"diagnosis_assessments"' in system)
         ok &= check("anamnesi del paziente", bool(anamnesi) and anamnesi in user)
         if eon:
             ok &= check("esame obiettivo neurologico", eon in user)
@@ -154,6 +159,7 @@ def verify(record: dict, dump: int | None) -> bool:
         if step >= 2:
             ok &= check("biomarcatori plasmatici", "BIOMARCATORI EMATICI" in user)
             ok &= check("indici epato-renali", "FUNZIONALITÀ EPATO-RENALE" in user)
+            ok &= check("interpretazione deterministica", "CALCOLATA DAL SISTEMA" in user)
             ok &= check("output integrale step 1", "RAGIONAMENTO_STEP1_SENTINELLA" in user)
             ok &= check("differenziali step 1 con motivazione", "DIFFERENZIALE_STEP1_SENTINELLA" in user)
             ok &= check("sintesi step 1", "SINTESI_STEP1_SENTINELLA" in user)
@@ -163,7 +169,8 @@ def verify(record: dict, dump: int | None) -> bool:
             ok &= check("biomarcatori liquorali", "BIOMARCATORI LIQUOR" in user)
             ok &= check("output integrale step 2", "RAGIONAMENTO_STEP2_SENTINELLA" in user)
             ok &= check("affidabilità biomarcatori da step 2", "AFFIDABILITA_STEP2_SENTINELLA" in user)
-            ok &= check("richiesta profilo ATN", "ATN" in user)
+            expected_atn = compute_biomarker_assessment(record, 3)["atn"]["profile"]
+            ok &= check("profilo ATN deterministico", expected_atn in user, expected_atn)
             ok &= check("richiesta concordanza plasma-liquor", "concordanza plasma-liquor" in user)
 
         if dump == step:

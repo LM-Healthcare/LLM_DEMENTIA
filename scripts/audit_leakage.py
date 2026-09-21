@@ -34,6 +34,7 @@ if hasattr(sys.stdout, "buffer"):
 
 import pandas as pd
 
+from data.biomarkers import compute_biomarker_assessment
 from data.loader import HIDDEN_COLS, build_step_payload, get_database, get_ground_truth
 from data.preprocessor import format_therapy_for_prompt, standardize_therapy
 from llm.prompt_builder import build_step1_prompt, build_step2_prompt, build_step3_prompt
@@ -99,9 +100,12 @@ def build_all_prompts(record: dict) -> dict[int, str]:
     builders = {
         1: lambda: build_step1_prompt(
             build_step_payload(record, 1, summary), "CONTESTO_RAG_PLACEHOLDER", fmt),
-        2: lambda: build_step2_prompt(build_step_payload(record, 2, summary), _PREV, fmt),
-        3: lambda: build_step3_prompt(build_step_payload(record, 3, summary), _PREV, fmt,
-                                      step1_result=_PREV),
+        2: lambda: build_step2_prompt(
+            build_step_payload(record, 2, summary), _PREV, fmt,
+            compute_biomarker_assessment(record, 2)),
+        3: lambda: build_step3_prompt(
+            build_step_payload(record, 3, summary), _PREV, fmt,
+            compute_biomarker_assessment(record, 3), step1_result=_PREV),
     }
     return {step: "\n".join(build()) for step, build in builders.items()}
 

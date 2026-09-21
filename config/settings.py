@@ -48,11 +48,11 @@ RAG_STEPS: frozenset[int] = frozenset(
 
 # ─── Parametri di generazione LLM ─────────────────────────────────────────────
 LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
-LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "16384"))
-LLM_NUM_CTX: int = int(os.getenv("LLM_NUM_CTX", "32768"))
+LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+LLM_NUM_CTX: int = int(os.getenv("LLM_NUM_CTX", "12288"))
 LLM_TIMEOUT_S: int = int(os.getenv("LLM_TIMEOUT_S", "600"))
 # Nuovi tentativi se il modello restituisce una risposta priva di diagnosi primaria.
-LLM_RETRIES_ON_INVALID: int = int(os.getenv("LLM_RETRIES_ON_INVALID", "1"))
+LLM_RETRIES_ON_INVALID: int = int(os.getenv("LLM_RETRIES_ON_INVALID", "0"))
 
 RESULTS_DIR: Path = BASE_DIR / "results"
 RESULTS_DIR.mkdir(exist_ok=True)

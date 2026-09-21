@@ -15,6 +15,7 @@ Flusso di uno step:
 
 from __future__ import annotations
 
+import hashlib
 import time
 from typing import Optional
 
@@ -25,9 +26,11 @@ from config.settings import (
     OLLAMA_MODEL,
     RAG_STEPS,
 )
+from data.biomarkers import compute_biomarker_assessment
 from data.loader import CSF_CORE_BIOMARKER_COLS, PLASMA_BIOMARKER_COLS, build_step_payload
 from data.preprocessor import format_therapy_for_prompt
-from llm.ollama_client import generate, parse_json_response
+from llm.ollama_client import generate_detailed, parse_json_response_detailed
+from llm.output_schemas import schema_for_step
 from llm.prompt_builder import build_step1_prompt, build_step2_prompt, build_step3_prompt
 from pipeline.validator import validate_step_result
 from rag.retriever import retrieve_context, build_queries, format_context_for_prompt, extract_rag_sources
@@ -83,31 +86,38 @@ def _clinical_context(record: dict) -> str:
 
 
 def usable_result(step_result: Optional[dict]) -> Optional[dict]:
-    """
-    Output di uno step utilizzabile come input del successivo.
-
-    Un JSON non parsabile produce {"error": ...}: passarlo allo step seguente
-    inietterebbe una distribuzione diagnostica vuota spacciata per valida.
-    """
     if not step_result or not step_result.get("feasible"):
         return None
-    result = step_result.get("result")
+    result = step_result.get("model_result", step_result.get("result"))
     if not isinstance(result, dict) or "error" in result:
+        return None
+    primary = result.get("primary_diagnosis")
+    if isinstance(primary, str):
+        return result if primary.strip() else None
+    if not isinstance(primary, dict) or not primary.get("diagnosis"):
         return None
     return result
 
 
-def _skipped(step: int, codice: str, reason: str, model: str) -> dict:
+def _skipped(step: int, codice: str, reason: str, model: str, seed: int | None = None) -> dict:
     return {
         "step": step,
         "patient_code": codice,
         "feasible": False,
         "skip_reason": reason,
         "result": None,
+        "model_result": None,
         "raw_response": None,
+        "parse_metadata": None,
+        "generation_metadata": None,
+        "generation_attempts": [],
+        "model_input": None,
         "duration_s": 0.0,
         "model_used": model,
+        "seed": seed,
+        "computed_biomarkers": None,
         "rag_sources": [],
+        "prompt_chars": None,
     }
 
 
@@ -120,6 +130,9 @@ def run_step(
     child_store=None,
     step1_result: Optional[dict] = None,
     step2_result: Optional[dict] = None,
+    seed: int | None = None,
+    rag_bundle: Optional[dict] = None,
+    retries_on_invalid: int = LLM_RETRIES_ON_INVALID,
 ) -> dict:
     """
     Esegue lo step specificato per un paziente.
@@ -142,46 +155,79 @@ def run_step(
 
     feasible, skip_reason = _check_step_feasibility(record, step)
     if not feasible:
-        return _skipped(step, codice, skip_reason, model)
+        return _skipped(step, codice, skip_reason, model, seed)
 
     if step == 2 and step1_result is None:
-        return _skipped(2, codice, "Risultato Step 1 mancante", model)
+        return _skipped(2, codice, "Risultato Step 1 mancante", model, seed)
     if step == 3 and step2_result is None:
-        return _skipped(3, codice, "Risultato Step 2 mancante", model)
+        return _skipped(3, codice, "Risultato Step 2 mancante", model, seed)
     if step not in (1, 2, 3):
-        return _skipped(step, codice, f"Step {step} non valido", model)
+        return _skipped(step, codice, f"Step {step} non valido", model, seed)
 
     payload = build_step_payload(record, step, terapia_parsed.get("summary"))
     terapia_fmt = format_therapy_for_prompt(terapia_parsed)
+    biomarker_assessment = compute_biomarker_assessment(record, step) if step >= 2 else None
 
-    rag_sources: list[dict] = []
-    if step in RAG_STEPS:
-        rag_context, rag_sources = _retrieve(step, record, parent_store, child_store)
-    else:
-        rag_context = ""
+    active_rag = rag_bundle
+    if step in RAG_STEPS and active_rag is None:
+        active_rag = prepare_rag_bundle(step, record, parent_store, child_store)
+    rag_context = (active_rag or {}).get("context", "")
+    rag_sources = (active_rag or {}).get("sources", [])
 
     if step == 1:
         system_prompt, user_prompt = build_step1_prompt(payload, rag_context, terapia_fmt)
     elif step == 2:
-        system_prompt, user_prompt = build_step2_prompt(payload, step1_result, terapia_fmt)
+        system_prompt, user_prompt = build_step2_prompt(
+            payload, step1_result, terapia_fmt, biomarker_assessment
+        )
     else:
         system_prompt, user_prompt = build_step3_prompt(
-            payload, step2_result, terapia_fmt, step1_result=step1_result
+            payload, step2_result, terapia_fmt, biomarker_assessment,
+            step1_result=step1_result,
         )
 
-    raw_response, result = _generate_validated(system_prompt, user_prompt, model, step, codice)
+    generated = _generate_validated(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        model=model,
+        step=step,
+        codice=codice,
+        seed=seed,
+        retries_on_invalid=retries_on_invalid,
+        computed_biomarkers=biomarker_assessment,
+        rag_sources=rag_sources,
+    )
+    result = generated["result"]
     for warning in (result or {}).get("consistency", {}).get("warnings", []):
         print(f"[Step {step}/{codice}] {warning}")
 
+    prompt_hash = hashlib.sha256(
+        f"{system_prompt}\0{user_prompt}".encode("utf-8")
+    ).hexdigest()
     return {
         "step": step,
         "patient_code": codice,
         "feasible": True,
         "skip_reason": None,
         "result": result,
-        "raw_response": raw_response,
+        "model_result": generated["model_result"],
+        "raw_response": generated["raw_response"],
+        "parse_metadata": generated["parse_metadata"],
+        "generation_metadata": generated["generation_metadata"],
+        "generation_attempts": generated["attempts"],
+        "model_input": {
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "prompt_sha256": prompt_hash,
+            "payload": payload,
+            "computed_biomarkers": biomarker_assessment,
+            "rag_queries": (active_rag or {}).get("queries", []),
+            "rag_bundle_sha256": (active_rag or {}).get("sha256"),
+        },
         "duration_s": round(time.time() - t_start, 2),
         "model_used": model,
+        "seed": seed,
+        "computed_biomarkers": biomarker_assessment,
         "rag_sources": rag_sources,
         "prompt_chars": len(system_prompt) + len(user_prompt),
     }
@@ -195,45 +241,91 @@ def _is_structurally_valid(result: dict | None) -> bool:
 
 
 def _generate_validated(
-    system_prompt: str, user_prompt: str, model: str, step: int, codice: str
-) -> tuple[str, dict]:
-    """
-    Chiama il modello e valida l'output, ritentando una volta se la risposta è
-    inutilizzabile.
+    system_prompt: str,
+    user_prompt: str,
+    model: str,
+    step: int,
+    codice: str,
+    seed: int | None,
+    retries_on_invalid: int,
+    computed_biomarkers: dict | None,
+    rag_sources: list[dict],
+) -> dict:
+    max_attempts = 1 + max(0, retries_on_invalid)
+    attempts: list[dict] = []
+    final: dict = {}
 
-    I modelli piccoli a volte chiudono il JSON prima dei campi obbligatori: un
-    singolo nuovo tentativo recupera il paziente invece di perderlo, e costa meno
-    di rieseguire l'intera pipeline.
-    """
-    attempts = 1 + max(0, LLM_RETRIES_ON_INVALID)
-    raw_response, result = "", {}
-
-    for attempt in range(1, attempts + 1):
-        raw_response = generate(
+    for attempt_index in range(max_attempts):
+        attempt_seed = None if seed is None else seed + attempt_index * 1_000_003
+        generation = generate_detailed(
             prompt=user_prompt,
             system=system_prompt,
             model=model,
             temperature=LLM_TEMPERATURE,
             max_tokens=LLM_MAX_TOKENS,
+            seed=attempt_seed,
+            output_schema=schema_for_step(step),
         )
-        result = validate_step_result(parse_json_response(raw_response))
-        if _is_structurally_valid(result):
-            return raw_response, result
-        if attempt < attempts:
+        parsed = parse_json_response_detailed(generation["response"])
+        model_result = parsed["data"]
+        result = validate_step_result(
+            model_result,
+            computed_biomarkers=computed_biomarkers,
+            rag_sources=rag_sources,
+        )
+        generation_metadata = {
+            key: value for key, value in generation.items() if key != "response"
+        }
+        attempt_record = {
+            "attempt": attempt_index + 1,
+            "seed": attempt_seed,
+            "raw_response": generation["response"],
+            "model_result": model_result,
+            "parse_metadata": parsed["metadata"],
+            "generation_metadata": generation_metadata,
+            "structurally_valid": _is_structurally_valid(result),
+        }
+        attempts.append(attempt_record)
+        final = {
+            "raw_response": generation["response"],
+            "model_result": model_result,
+            "result": result,
+            "parse_metadata": parsed["metadata"],
+            "generation_metadata": generation_metadata,
+            "attempts": attempts,
+        }
+        if attempt_record["structurally_valid"]:
+            break
+        if attempt_index + 1 < max_attempts:
             print(f"[Step {step}/{codice}] risposta priva di diagnosi primaria, "
-                  f"nuovo tentativo ({attempt + 1}/{attempts})")
+                  f"nuovo tentativo ({attempt_index + 2}/{max_attempts})")
 
-    return raw_response, result
+    return final
 
 
-def _retrieve(step: int, record: dict, parent_store, child_store) -> tuple[str, list[dict]]:
-    """Recupera il contesto dalla knowledge base per lo step indicato."""
+def prepare_rag_bundle(step: int, record: dict, parent_store, child_store) -> dict:
     if not (child_store and parent_store):
-        return "Knowledge base non disponibile.", []
+        context = "Knowledge base non disponibile."
+        return {
+            "step": step,
+            "queries": [],
+            "context": context,
+            "sources": [],
+            "sha256": hashlib.sha256(context.encode("utf-8")).hexdigest(),
+        }
 
     queries = build_queries(step, clinical_context=_clinical_context(record))
     docs = retrieve_context(child_store, parent_store, queries)
-    return format_context_for_prompt(docs), extract_rag_sources(docs)
+    context = format_context_for_prompt(docs)
+    sources = extract_rag_sources(docs)
+    digest_material = "\n".join(queries) + "\0" + context
+    return {
+        "step": step,
+        "queries": queries,
+        "context": context,
+        "sources": sources,
+        "sha256": hashlib.sha256(digest_material.encode("utf-8")).hexdigest(),
+    }
 
 
 def run_full_pipeline(
@@ -242,27 +334,53 @@ def run_full_pipeline(
     model: str = OLLAMA_MODEL,
     parent_store=None,
     child_store=None,
+    seed: int | None = None,
+    rag_bundle: Optional[dict] = None,
+    retries_on_invalid: int = LLM_RETRIES_ON_INVALID,
 ) -> dict:
     """
     Esegue l'intera pipeline (step 1→2→3) per un paziente, propagando a ogni
     step l'output integrale di tutti quelli precedenti.
     """
-    s1 = run_step(1, record, terapia_parsed, model, parent_store, child_store)
+    step_seeds = {
+        step: None if seed is None else seed + step - 1 for step in (1, 2, 3)
+    }
+    s1 = run_step(
+        1, record, terapia_parsed, model, parent_store, child_store,
+        seed=step_seeds[1], rag_bundle=rag_bundle,
+        retries_on_invalid=retries_on_invalid,
+    )
     step1_result = usable_result(s1)
 
-    s2 = run_step(2, record, terapia_parsed, model, parent_store, child_store,
-                  step1_result=step1_result)
+    s2 = run_step(
+        2, record, terapia_parsed, model, parent_store, child_store,
+        step1_result=step1_result, seed=step_seeds[2],
+        retries_on_invalid=retries_on_invalid,
+    )
     step2_result = usable_result(s2)
 
-    # Se lo step 2 non ha prodotto un output valido, lo step 3 riparte da quello
-    # dello step 1: perdere l'intera pipeline per un JSON malformato sarebbe peggio.
-    s3 = run_step(3, record, terapia_parsed, model, parent_store, child_store,
-                  step1_result=step1_result,
-                  step2_result=step2_result or step1_result)
+    s3 = run_step(
+        3, record, terapia_parsed, model, parent_store, child_store,
+        step1_result=step1_result, step2_result=step2_result,
+        seed=step_seeds[3], retries_on_invalid=retries_on_invalid,
+    )
 
     return {
         "step1": s1,
         "step2": s2,
         "step3": s3,
+        "model": model,
+        "base_seed": seed,
+        "step_seeds": step_seeds,
+        "rag_bundle_sha256": (
+            (rag_bundle or {}).get("sha256")
+            or (s1.get("model_input") or {}).get("rag_bundle_sha256")
+        ),
+        "input_availability": {
+            "plasma_available": _n_available(record, PLASMA_BIOMARKER_COLS),
+            "plasma_total": len(PLASMA_BIOMARKER_COLS),
+            "csf_core_available": _n_available(record, CSF_CORE_BIOMARKER_COLS),
+            "csf_core_total": len(CSF_CORE_BIOMARKER_COLS),
+        },
         "total_duration_s": round(sum(r.get("duration_s", 0) for r in (s1, s2, s3)), 2),
     }

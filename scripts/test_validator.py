@@ -100,7 +100,27 @@ def test_excluded_with_score() -> None:
         ],
     })
     check("contraddizione ESCLUSA/score segnalata",
-          any("ESCLUSA ma ha score" in w for w in result["consistency"]["warnings"]))
+          any("categoria dichiarata ESCLUSA" in w for w in result["consistency"]["warnings"]))
+
+
+def test_fixed_assessments() -> None:
+    print("\nformato vincolante con otto chiavi fisse")
+    scores = {"AD": 0.1, "AD-PPA": 0.05, "MIXED": 0.15, "VAD": 0.55,
+              "SCD": 0.05, "LATE": 0.03, "FTD": 0.04, "PD": 0.03}
+    result = validate_step_result({
+        "step": 3,
+        "primary_diagnosis": "VAD",
+        "diagnosis_assessments": {
+            code: {"reasoning": f"valutazione {code}", "confidence_score": score}
+            for code, score in scores.items()
+        },
+    })
+    check("primaria trasformata in oggetto", result["primary_diagnosis"]["diagnosis"] == "VAD")
+    check("sette differenziali uniche", len(result["differential_diagnoses"]) == 7)
+    check("categorie derivate dagli score", result["primary_diagnosis"]["probability"] == "ALTA")
+    check("somma esatta", result["consistency"]["score_sum"] == 1.0)
+    check("nessuna diagnosi mancante",
+          not any("Diagnosi non valutate" in w for w in result["consistency"]["warnings"]))
 
 
 def test_error_passthrough() -> None:
@@ -116,6 +136,7 @@ def main() -> None:
     test_t2_inconsistency()
     test_coherent_result()
     test_excluded_with_score()
+    test_fixed_assessments()
     test_error_passthrough()
 
     print()
