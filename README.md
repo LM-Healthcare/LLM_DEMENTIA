@@ -108,6 +108,7 @@ python scripts/test_json_parser.py                    # parsing esatto/riparato 
 python scripts/test_evaluator.py                      # metriche e output invalidi
 python scripts/test_pipeline_flow.py                  # step non eleggibili e fallback
 python scripts/test_rag_modes.py                      # filtri Budson/Casebook/both
+python scripts/test_shared_cache.py                   # cache unica per tutti i modelli
 python scripts/verify_prompts.py                      # input effettivi dei tre step
 python scripts/audit_leakage.py                       # la diagnosi non raggiunge il modello
 python scripts/audit_dataset.py                       # schema, missingness e outlier
@@ -274,7 +275,8 @@ risultato normalizzato, seed, opzioni, token e tempi Ollama.
 ## Evaluation headless
 
 La pipeline multi-run è in `evaluation/` e ha documentazione dedicata:
-<evaluation/README.md>. Supporta i tre corpus RAG, seed prefissati, cache RAG,
+<evaluation/README.md>. Le tre cache condivise si creano con
+`python -m evaluation.cache --rag-mode all`, senza modello, run o seed. Supporta
 resume, JSONL append-only, Excel, manifest riproducibile e container NVIDIA.
 
 ## Protocollo dell'evaluation headless

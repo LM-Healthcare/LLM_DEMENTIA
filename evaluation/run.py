@@ -37,12 +37,15 @@ from config.settings import (
 from data.loader import get_all_codes, get_database, get_ground_truth, get_patient_record
 from data.preprocessor import standardize_therapy
 from evaluation.export import export_excel, read_jsonl
-from llm.ollama_client import get_model_info, is_ollama_running
+from evaluation.rag_cache import (
+    RAG_CACHE_VERSION,
+    cache_manifest,
+    load_shared_bundles,
+    precompute_cache,
+)
+from llm.ollama_client import get_model_info, get_model_names, is_ollama_running
 from pipeline.evaluator import concordance_record, extract_llm_diagnosis
-from pipeline.step_runner import prepare_rag_bundle, run_full_pipeline
-from rag.vector_store import iter_child_corpus, load_existing_store
-
-RAG_CACHE_VERSION = 2
+from pipeline.step_runner import run_full_pipeline
 
 
 def utc_now() -> str:
@@ -190,19 +193,9 @@ def select_patients(df: pd.DataFrame, requested: list[str] | None, limit: int | 
     return codes[:limit] if limit else codes
 
 
-def check_index_sources(child_store, rag_mode: str) -> None:
-    indexed = {doc.metadata.get("source") for doc in iter_child_corpus(child_store)}
-    required = set(RAG_CORPORA[rag_mode])
-    missing = required - indexed
-    if missing:
-        raise RuntimeError(
-            "Documenti non presenti nell'indice RAG: " + ", ".join(sorted(missing))
-            + ". Ricostruire con: python scripts/build_rag.py --force"
-        )
-
-
 def build_manifest(args, patients: list[str], model_info: dict, warnings: list[str]) -> dict:
     corpus_files = [Path(DOCS_FOLDER) / name for name in RAG_CORPORA[args.rag_mode]]
+    shared_cache = cache_manifest(args.output_root, args.rag_mode)
     return {
         "schema_version": 1,
         "created_at": utc_now(),
@@ -215,6 +208,10 @@ def build_manifest(args, patients: list[str], model_info: dict, warnings: list[s
         ],
         "embedding_model": OLLAMA_EMBED_MODEL,
         "rag_cache_version": RAG_CACHE_VERSION,
+        "shared_rag_cache": {
+            "configuration_sha256": shared_cache["configuration_sha256"],
+            "path": f"rag_cache/{args.rag_mode}",
+        },
         "dataset": {"path": Path(DATABASE_PATH).name, "sha256": sha256_file(DATABASE_PATH)},
         "reference_values": {
             "path": Path(REFERENCE_VALUES_PATH).name,
@@ -283,40 +280,6 @@ def write_progress(path: Path, **values) -> None:
 
 def has_jsonl_records(path: Path) -> bool:
     return path.exists() and path.stat().st_size > 0
-
-
-def load_or_build_rag_cache(
-    cache_dir: Path,
-    patient_code: str,
-    record: dict,
-    rag_mode: str,
-    dataset_hash: str,
-    parent_store,
-    child_store,
-    refresh: bool,
-) -> dict:
-    cache_path = cache_dir / f"{patient_code}.json"
-    if cache_path.exists() and not refresh:
-        cached = json.loads(cache_path.read_text(encoding="utf-8"))
-        if (
-            cached.get("cache_version") == RAG_CACHE_VERSION
-            and cached.get("rag_mode") == rag_mode
-            and cached.get("dataset_sha256") == dataset_hash
-        ):
-            return cached["bundle"]
-
-    bundle = prepare_rag_bundle(
-        1, record, parent_store, child_store, rag_mode=rag_mode
-    )
-    write_json(cache_path, {
-        "cache_version": RAG_CACHE_VERSION,
-        "patient_code": patient_code,
-        "rag_mode": rag_mode,
-        "dataset_sha256": dataset_hash,
-        "created_at": utc_now(),
-        "bundle": bundle,
-    })
-    return bundle
 
 
 def completed_keys(jsonl_path: Path, retry_errors: bool) -> set[tuple[str, int]]:
@@ -408,7 +371,7 @@ def acquire_lock(path: Path, force: bool) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluation headless LLM Dementia")
-    parser.add_argument("--model", required=True)
+    parser.add_argument("--model")
     parser.add_argument("--runs", type=int, default=30)
     parser.add_argument("--rag-mode", choices=sorted(RAG_CORPORA), default="budson")
     parser.add_argument("--seed-start", type=int, default=1001)
@@ -438,6 +401,40 @@ def main() -> None:
     check_required_files(args.rag_mode)
     if not is_ollama_running():
         sys.exit(f"Ollama non raggiungibile su {OLLAMA_BASE_URL}")
+    df = get_database()
+    warnings = data_warnings(df)
+    if warnings and not args.allow_data_warnings:
+        print("Evaluation bloccata da valori da verificare:")
+        for warning in warnings:
+            print(f"  ! {warning}")
+        sys.exit("Correggere il database o usare consapevolmente --allow-data-warnings")
+    patients = select_patients(df, args.patients, args.limit)
+
+    if args.cache_only:
+        models = get_model_names()
+        if not any(
+            name.split(":")[0] == OLLAMA_EMBED_MODEL.split(":")[0] for name in models
+        ):
+            sys.exit(f"Embedding model non installato: {OLLAMA_EMBED_MODEL}")
+        print(
+            "--cache-only usa ora la cache condivisa; --model, --runs e --seed-start "
+            "sono ignorati. Preferire: python -m evaluation.cache"
+        )
+        try:
+            precompute_cache(
+                args.output_root,
+                args.rag_mode,
+                patients,
+                refresh=args.refresh_rag_cache,
+                force_unlock=args.force_unlock,
+            )
+            print("Cache RAG condivisa completata.")
+        except KeyboardInterrupt:
+            print("\nInterruzione: cache completate salvate. Rilanciare lo stesso comando.")
+        return
+
+    if not args.model:
+        sys.exit("--model è obbligatorio per le run LLM (non per evaluation.cache)")
     model_info = get_model_info(args.model)
     if model_info is None:
         sys.exit(f"Modello non installato: {args.model}")
@@ -448,18 +445,8 @@ def main() -> None:
             "un tag FP16/BF16; --allow-quantized è riservato agli smoke test."
         )
 
-    df = get_database()
-    warnings = data_warnings(df)
-    if warnings and not args.allow_data_warnings:
-        print("Evaluation bloccata da valori da verificare:")
-        for warning in warnings:
-            print(f"  ! {warning}")
-        sys.exit("Correggere il database o usare consapevolmente --allow-data-warnings")
-
-    patients = select_patients(df, args.patients, args.limit)
     experiment_name = args.experiment_name or f"{safe_name(args.model)}__{args.rag_mode}"
     output_dir = args.output_root / experiment_name
-    cache_dir = output_dir / "rag_cache"
     jsonl_path = output_dir / "runs.jsonl"
     manifest_path = output_dir / "manifest.json"
     excel_path = output_dir / "results.xlsx"
@@ -475,7 +462,8 @@ def main() -> None:
     if manifest_path.exists():
         existing = json.loads(manifest_path.read_text(encoding="utf-8"))
         immutable = (
-            "model", "rag_mode", "rag_cache_version", "patients", "corpus", "generation"
+            "model", "rag_mode", "rag_cache_version", "shared_rag_cache",
+            "patients", "corpus", "generation"
         )
         mismatches = [key for key in immutable if existing.get(key) != manifest.get(key)]
         nested_checks = (
@@ -515,7 +503,6 @@ def main() -> None:
         return
 
     ensure_writable(output_dir)
-    ensure_writable(cache_dir)
     write_json(manifest_path, manifest)
     jsonl_path.touch(exist_ok=True)
     if not has_jsonl_records(jsonl_path) and excel_path.exists():
@@ -531,42 +518,29 @@ def main() -> None:
     write_progress(
         progress_path,
         status="running",
-        stage="rag_cache",
-        rag_cached=0,
-        rag_total=len(patients),
+        stage="shared_rag_cache",
         runs_completed=len(done),
         runs_total=total,
     )
     try:
-        parent_store, child_store = load_existing_store()
-        if parent_store is None:
-            raise RuntimeError("Indice RAG non disponibile")
-        check_index_sources(child_store, args.rag_mode)
-
-        dataset_hash = manifest["dataset"]["sha256"]
-        bundles: dict[str, dict] = {}
-        print("\nPrecalcolo/lettura cache RAG...")
-        for index, code in enumerate(patients, 1):
-            record = get_patient_record(df, code)
-            bundles[code] = load_or_build_rag_cache(
-                cache_dir, code, record, args.rag_mode, dataset_hash,
-                parent_store, child_store, args.refresh_rag_cache,
+        if args.refresh_rag_cache:
+            precompute_cache(
+                args.output_root,
+                args.rag_mode,
+                patients,
+                refresh=True,
+                force_unlock=args.force_unlock,
             )
-            write_progress(
-                progress_path,
-                stage="rag_cache",
-                current_patient=code,
-                rag_cached=index,
-                rag_total=len(patients),
+        try:
+            bundles = load_shared_bundles(args.output_root, args.rag_mode, patients)
+        except RuntimeError:
+            print("Cache condivisa mancante/obsoleta: precalcolo automatico...")
+            bundles = precompute_cache(
+                args.output_root,
+                args.rag_mode,
+                patients,
+                force_unlock=args.force_unlock,
             )
-            print(f"  RAG {index}/{len(patients)} {code}", end="\r")
-        print()
-        if args.cache_only:
-            write_progress(
-                progress_path, status="completed", stage="rag_cache_done", current_patient=None
-            )
-            print("Cache RAG completata. Nessuna chiamata LLM eseguita (--cache-only).")
-            return
 
         print("Warm-up modello e verifica GPU...")
         model_runtime = warmup_and_gpu_info(args.model)
@@ -606,8 +580,8 @@ def main() -> None:
                     record=record,
                     terapia_parsed=therapy,
                     model=args.model,
-                    parent_store=parent_store,
-                    child_store=child_store,
+                    parent_store=None,
+                    child_store=None,
                     seed=seed,
                     rag_bundle=bundles[code],
                     rag_mode=args.rag_mode,

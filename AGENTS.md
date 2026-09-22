@@ -34,8 +34,9 @@ Interprete diretto, se serve: `C:/Users/filow/miniconda3/envs/LLM_DEMENTIA/pytho
 | Test pipeline end-to-end | `python scripts/smoke_pipeline.py --model qwen3.5:latest --code T2 --seed 1001` |
 | Linter Python | `python -m pyflakes api config data llm pipeline rag scripts run.py` |
 | Typecheck + build frontend | `cd frontend && npm run build` |
-| Test modalità RAG | `python scripts/test_rag_modes.py` |
-| Smoke evaluation | `python -m evaluation.run --model llama3.1:8b --runs 1 --rag-mode casebook --patients T2 --experiment-name smoke --allow-dirty` |
+| Test modalità RAG/cache | `python scripts/test_rag_modes.py && python scripts/test_shared_cache.py` |
+| Cache condivisa | `python -m evaluation.cache --rag-mode budson --limit 2` |
+| Smoke evaluation Q4 | `python -m evaluation.run --model llama3.1:8b --runs 1 --rag-mode casebook --patients T2 --experiment-name smoke --allow-dirty --allow-quantized --allow-partial-gpu` |
 | Lista farmaci da mappare | `python scripts/extract_unidentified_drugs.py` |
 
 Ollama deve essere in esecuzione (`ollama serve`). Modelli dello studio:
@@ -121,7 +122,9 @@ Retrieval ibrido con Reciprocal Rank Fusion:
    "fonte" priva di contenuto.
 5. La query clinica paziente-specifica usa peso RRF 20: non ridurlo senza
    verificare `test_rag_modes.py`, che deve mostrare contesti diversi tra T1/T2.
-   Ogni modifica al retrieval richiede incremento di `RAG_CACHE_VERSION`.
+   Ogni modifica al retrieval richiede incremento di `RAG_CACHE_VERSION` in
+   `evaluation/rag_cache.py`. Le cache vivono solo in
+   `results/evaluation/rag_cache/<mode>` e sono condivise tra tutti i modelli.
 6. Le citazioni esposte all'interfaccia contengono il passaggio **integrale**,
    sezione, capitolo, intervallo di pagine, punteggio e gli estratti esatti che
    hanno prodotto il match.

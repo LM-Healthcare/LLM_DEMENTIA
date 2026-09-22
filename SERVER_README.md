@@ -59,20 +59,15 @@ docker compose run --rm app python scripts/test_rag_modes.py
 
 ## 5. Evaluation
 
-Prima si può precalcolare il RAG, con resume automatico. Le cache create da
-versioni precedenti senza `cache_version` vengono rigenerate automaticamente:
+Creare una sola volta le tre cache condivise. Non servono modello, run o seed:
 
 ```bash
 docker compose run --rm evaluation \
-  python -m evaluation.run \
-  --model qwen3.5:9b-bf16 \
-  --runs 30 \
-  --rag-mode budson \
-  --seed-start 1001 \
-  --cache-only
+  python -m evaluation.cache --rag-mode all
 ```
 
-Poi avviare le run rilanciando lo stesso comando senza `--cache-only`:
+Le cache sono condivise da Qwen, Ministral e Llama. Le versioni vecchie vengono
+rigenerate automaticamente. Poi avviare le run:
 
 ```bash
 docker compose run --rm evaluation \
@@ -90,6 +85,7 @@ resumable: dopo Ctrl+C basta rilanciarlo identico.
 
 ```bash
 docker compose exec ollama ollama ps
+cat results/evaluation/rag_cache/budson/progress.json
 cat results/evaluation/qwen3.5_9b-bf16__budson/progress.json
 tail -f results/evaluation/qwen3.5_9b-bf16__budson/runs.jsonl
 ```
@@ -101,12 +97,13 @@ interamente residente in VRAM.
 Output:
 
 ```text
-results/evaluation/<modello>__<rag_mode>/
-├── manifest.json
-├── progress.json
-├── runs.jsonl
-├── results.xlsx
-└── rag_cache/
+results/evaluation/
+├── rag_cache/{budson,casebook,both}/  # condivisa tra modelli
+└── <modello>__<rag_mode>/
+    ├── manifest.json
+    ├── progress.json
+    ├── runs.jsonl
+    └── results.xlsx
 ```
 
 L'Excel nasce solo dopo la prima pipeline LLM completata; durante il solo

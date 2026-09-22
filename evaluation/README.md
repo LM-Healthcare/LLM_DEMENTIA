@@ -87,22 +87,25 @@ smoke test e non vanno usati nell'esperimento definitivo.
 
 ## Esecuzione
 
-Il precalcolo può essere eseguito separatamente:
+Precalcolare una sola volta le cache condivise per tutti i modelli:
 
 ```bash
-python -m evaluation.run \
-  --model qwen3.5:9b-bf16 \
-  --runs 30 \
-  --rag-mode budson \
-  --seed-start 1001 \
-  --cache-only
+python -m evaluation.cache --rag-mode all
 ```
 
-Crea subito `manifest.json`, `progress.json`, un `runs.jsonl` vuoto e i file
-paziente in `rag_cache/`. Non crea un Excel vuoto: `results.xlsx` nasce dopo la
-prima pipeline LLM completata. Cache e progressi sopravvivono a Ctrl+C. Le cache
-vecchie prive di `cache_version` vengono rigenerate automaticamente; la versione
-corrente usa query clinica pesata e produce contesti paziente-specifici.
+Oppure una modalità alla volta:
+
+```bash
+python -m evaluation.cache --rag-mode budson
+python -m evaluation.cache --rag-mode casebook
+python -m evaluation.cache --rag-mode both
+```
+
+Non servono modello, run o seed. I file sono in
+`results/evaluation/rag_cache/<modalità>/` e vengono riutilizzati da Qwen,
+Ministral e Llama. Le cache vecchie/model-specific vengono ignorate; la versione
+corrente produce contesti paziente-specifici. `evaluation.run --cache-only`
+resta solo come alias retrocompatibile e ignora modello/run/seed.
 
 Esempio Qwen, 30 run, Budson:
 
@@ -184,12 +187,16 @@ Una pipeline interrotta a metà verrà rieseguita con lo stesso seed.
 Percorso predefinito:
 
 ```text
-results/evaluation/<modello>__<rag_mode>/
-├── manifest.json
-├── progress.json
-├── runs.jsonl
-├── results.xlsx  # solo dopo la prima run LLM completata
-└── rag_cache/
+results/evaluation/
+├── rag_cache/
+│   ├── budson/       # condivisa tra tutti i modelli
+│   ├── casebook/
+│   └── both/
+└── <modello>__<rag_mode>/
+    ├── manifest.json
+    ├── progress.json
+    ├── runs.jsonl
+    └── results.xlsx
 ```
 
 `runs.jsonl` è la fonte autorevole append-only. Contiene input e prompt esatti,
@@ -261,6 +268,9 @@ docker compose exec ollama ollama pull ministral-3:8b-instruct-2512-fp16
 docker compose exec ollama ollama pull llama3.1:8b-instruct-fp16
 
 docker compose run --rm app python scripts/build_rag.py --force
+
+docker compose run --rm evaluation \
+  python -m evaluation.cache --rag-mode all
 
 docker compose run --rm evaluation \
   python -m evaluation.run \
