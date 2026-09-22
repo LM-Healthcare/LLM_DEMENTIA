@@ -4,9 +4,9 @@ import { api } from '@/api/client'
 import type { ModelInfo } from '@/types'
 
 const SUGGESTED_MODELS = [
-  { name: 'qwen3.5:latest',   desc: 'Qwen 3.5 9B — modello dello studio',               size: '6.6 GB' },
-  { name: 'ministral-3:8b',  desc: 'Ministral 3 8B — modello dello studio',            size: '6.0 GB' },
-  { name: 'llama3.1:8b',     desc: 'Meta Llama 3.1 8B — modello dello studio',         size: '4.7 GB' },
+  { name: 'qwen3.5:9b-bf16', desc: 'Qwen 3.5 9B BF16 — studio, server 24 GB',           size: '19 GB' },
+  { name: 'ministral-3:8b-instruct-2512-fp16', desc: 'Ministral 3 8B FP16 — studio, server 24 GB', size: '18 GB' },
+  { name: 'llama3.1:8b-instruct-fp16', desc: 'Llama 3.1 8B FP16 — studio, server 24 GB', size: '16 GB' },
   { name: 'bge-m3',          desc: 'BGE-M3 — embedding multilingue RAG obbligatorio',  size: '1.2 GB' },
 ]
 

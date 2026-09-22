@@ -1,6 +1,9 @@
 services:
   ollama:
     image: ollama/ollama:0.17.5
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
     deploy:
       resources:
         reservations:
@@ -21,6 +24,7 @@ services:
 
   app:
     image: llm-dementia:latest
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     build:
       context: .
       args:
@@ -30,6 +34,7 @@ services:
       ollama:
         condition: service_healthy
     environment:
+      HOME: /tmp
       OLLAMA_BASE_URL: http://ollama:11434
       DATABASE_PATH: /app/Database_FINALE_codificato.xlsx
       REFERENCE_VALUES_PATH: /app/Valori_di_riferimento_lab.xlsx
@@ -47,6 +52,14 @@ services:
 
   evaluation:
     image: llm-dementia:latest
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     build:
       context: .
       args:
@@ -56,6 +69,9 @@ services:
       ollama:
         condition: service_healthy
     environment:
+      HOME: /tmp
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
       OLLAMA_BASE_URL: http://ollama:11434
       DATABASE_PATH: /app/Database_FINALE_codificato.xlsx
       REFERENCE_VALUES_PATH: /app/Valori_di_riferimento_lab.xlsx

@@ -45,6 +45,13 @@ def main() -> None:
     if not hash_ok:
         failures.append("hash")
 
+    t1 = get_patient_record(get_database(), "T1")
+    t1_bundle = prepare_rag_bundle(1, t1, parent_store, child_store, rag_mode="budson")
+    personalized = t1_bundle["context"] != bundles["budson"]["context"]
+    print(f"  [{'ok' if personalized else 'FALLITO'}] contesto personalizzato T1/T2")
+    if not personalized:
+        failures.append("patient_specific_context")
+
     if failures:
         print("Controlli falliti: " + ", ".join(failures))
         sys.exit(1)

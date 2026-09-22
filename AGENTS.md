@@ -39,8 +39,9 @@ Interprete diretto, se serve: `C:/Users/filow/miniconda3/envs/LLM_DEMENTIA/pytho
 | Lista farmaci da mappare | `python scripts/extract_unidentified_drugs.py` |
 
 Ollama deve essere in esecuzione (`ollama serve`). Modelli dello studio:
-`qwen3.5:latest` (9.7B Q4_K_M), `ministral-3:8b` (8.9B Q4_K_M),
-`llama3.1:8b` (8.0B Q4_K_M); embedding `bge-m3`. Parametri condivisi:
+`qwen3.5:9b-bf16`, `ministral-3:8b-instruct-2512-fp16`,
+`llama3.1:8b-instruct-fp16`; embedding `bge-m3`. I tag Q4 sono ammessi solo per
+smoke test con `--allow-quantized`, mai per l'esperimento definitivo. Parametri condivisi:
 temperature 0.1, num_ctx 12288, num_predict 4096, retry 0.
 
 ## Verifica prima di considerare un lavoro concluso
@@ -118,6 +119,9 @@ Retrieval ibrido con Reciprocal Rank Fusion:
 4. Chunking con fusione dei frammenti sotto `RAG_MIN_CHUNK_CHARS`: un titolo di
    sezione viene inglobato nel testo che introduce invece di diventare una
    "fonte" priva di contenuto.
-5. Le citazioni esposte all'interfaccia contengono il passaggio **integrale**,
+5. La query clinica paziente-specifica usa peso RRF 20: non ridurlo senza
+   verificare `test_rag_modes.py`, che deve mostrare contesti diversi tra T1/T2.
+   Ogni modifica al retrieval richiede incremento di `RAG_CACHE_VERSION`.
+6. Le citazioni esposte all'interfaccia contengono il passaggio **integrale**,
    sezione, capitolo, intervallo di pagine, punteggio e gli estratti esatti che
    hanno prodotto il match.

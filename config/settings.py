@@ -47,6 +47,7 @@ RAG_CANDIDATES_PER_QUERY: int = int(os.getenv("RAG_CANDIDATES_PER_QUERY", "10"))
 RAG_BM25_WEIGHT: float = float(os.getenv("RAG_BM25_WEIGHT", "0.4"))
 # Costante della Reciprocal Rank Fusion.
 RAG_RRF_K: int = int(os.getenv("RAG_RRF_K", "60"))
+RAG_CLINICAL_QUERY_WEIGHT: float = float(os.getenv("RAG_CLINICAL_QUERY_WEIGHT", "20"))
 # Diversificazione delle fonti finali.
 RAG_MAX_PER_PAGE: int = int(os.getenv("RAG_MAX_PER_PAGE", "2"))
 RAG_MAX_PER_SOURCE: int = int(os.getenv("RAG_MAX_PER_SOURCE", "5"))

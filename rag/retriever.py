@@ -28,6 +28,7 @@ from config.settings import (
     DIAGNOSIS_LABELS,
     RAG_BM25_WEIGHT,
     RAG_CANDIDATES_PER_QUERY,
+    RAG_CLINICAL_QUERY_WEIGHT,
     RAG_MAX_PER_PAGE,
     RAG_MAX_PER_SOURCE,
     RAG_RRF_K,
@@ -167,6 +168,7 @@ def retrieve_context(
     top_k: int = RAG_TOP_K,
     use_bm25: bool = True,
     allowed_sources: set[str] | None = None,
+    clinical_query_index: int | None = None,
 ) -> list[Document]:
     """
     Esegue il retrieval ibrido multi-query e restituisce i parent chunk
@@ -185,12 +187,18 @@ def retrieve_context(
     parent_scores: dict[str, float] = defaultdict(float)
     parent_quotes: dict[str, list[tuple[float, str]]] = defaultdict(list)
 
-    for query in queries:
+    for query_index, query in enumerate(queries):
+        query_weight = (
+            RAG_CLINICAL_QUERY_WEIGHT if query_index == clinical_query_index else 1.0
+        )
         for rank, child in enumerate(_semantic_hits(child_store, query, allowed_sources)):
-            _accumulate(parent_scores, parent_quotes, child, rank, sem_weight)
+            _accumulate(parent_scores, parent_quotes, child, rank, sem_weight * query_weight)
         if lexical:
             for rank, child in enumerate(_lexical_hits(lexical, query, allowed_sources)):
-                _accumulate(parent_scores, parent_quotes, child, rank, RAG_BM25_WEIGHT)
+                _accumulate(
+                    parent_scores, parent_quotes, child, rank,
+                    RAG_BM25_WEIGHT * query_weight,
+                )
 
     if not parent_scores:
         return []

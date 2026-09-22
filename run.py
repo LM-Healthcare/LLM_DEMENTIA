@@ -48,6 +48,21 @@ def check_python_env() -> None:
         )
 
 
+def check_data_files() -> None:
+    from config.settings import DATABASE_PATH, DOCS_FOLDER, RAG_CORPORA, REFERENCE_VALUES_PATH
+
+    required = [Path(DATABASE_PATH), Path(REFERENCE_VALUES_PATH)] + [
+        Path(DOCS_FOLDER) / name for name in RAG_CORPORA["both"]
+    ]
+    missing = [str(path) for path in required if not path.is_file()]
+    if missing:
+        _fail(
+            "File dati mancanti:\n      - " + "\n      - ".join(missing),
+            "Database e manuali non sono nel repository. Segui SERVER_README.md.",
+        )
+    print("[ok] Database, valori di riferimento e manuali presenti")
+
+
 def check_ollama() -> None:
     from config.settings import OLLAMA_EMBED_MODEL, OLLAMA_BASE_URL
     from llm.ollama_client import is_ollama_running, get_model_names
@@ -150,6 +165,7 @@ def main() -> None:
 
     check_python_env()
     if not args.skip_checks:
+        check_data_files()
         check_ollama()
         check_rag(args.rebuild_rag)
         check_frontend(args.dev)

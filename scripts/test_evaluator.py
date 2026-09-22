@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from evaluation.run import is_unquantized
 from pipeline.evaluator import evaluate_batch
 
 
@@ -80,6 +81,12 @@ def main() -> None:
         "secondo paziente corretto da step 2": records[1]["first_correct_step"] == 2,
         "CSF introduce errore": records[1]["csf_introduced_error"] is True,
         "completezza preservata": records[1]["plasma_available"] == 2,
+        "BF16 accettato come non quantizzato":
+            is_unquantized({"details": {"quantization_level": "BF16"}}),
+        "FP16 accettato come non quantizzato":
+            is_unquantized({"details": {"quantization_level": "F16"}}),
+        "Q4 rifiutato come quantizzato":
+            not is_unquantized({"details": {"quantization_level": "Q4_K_M"}}),
     }
     failed = [name for name, ok in checks.items() if not ok]
     for name, ok in checks.items():

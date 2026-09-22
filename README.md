@@ -25,9 +25,12 @@ conda env create -f environment.yml
 conda activate LLM_DEMENTIA
 
 ollama pull bge-m3           # embedding RAG obbligatorio
-ollama pull qwen3.5:latest   # Qwen 3.5 9B (9.7B effettivi)
-ollama pull ministral-3:8b   # Ministral 3 8B
-ollama pull llama3.1:8b      # Meta Llama 3.1 8B
+# Tag Q4 per sviluppo locale/smoke test su GPU 8 GB:
+ollama pull qwen3.5:latest
+ollama pull ministral-3:8b
+ollama pull llama3.1:8b
+
+# Per l'evaluation RTX 3090 usare invece i tag BF16/FP16 in SERVER_README.md.
 ```
 
 ## Avvio
@@ -65,7 +68,8 @@ compila il frontend se manca e serve API e interfaccia su
 Per una RTX 3090 usare `docker-compose.yml`, che avvia Ollama in un container con
 GPU NVIDIA e monta database, manuali, indice e risultati come volumi. L'Ollama
 container è esposto sull'host a `127.0.0.1:11435` per non confliggere con un
-Ollama locale sulla porta 11434. Comandi completi in <evaluation/README.md>.
+Ollama locale sulla porta 11434. Avvio rapido in <SERVER_README.md>; protocollo
+completo in <evaluation/README.md>.
 
 ---
 
@@ -87,7 +91,9 @@ python scripts/build_rag.py --probe     # ispeziona il retrieval
 
 Il chunking garantisce che ogni passaggio citabile superi i 350 caratteri: i
 titoli di sezione vengono fusi nel testo che introducono invece di diventare
-"fonti" prive di contenuto. Le citazioni restituite all'interfaccia contengono il
+"fonti" prive di contenuto. La query clinica paziente-specifica ha peso maggiore
+nella RRF rispetto alle query generiche: il test verifica che T1 e T2 non ricevano
+lo stesso contesto. Le citazioni restituite all'interfaccia contengono il
 passaggio integrale, la sezione, l'intervallo di pagine e gli estratti esatti che
 hanno prodotto il match.
 
@@ -273,8 +279,10 @@ resume, JSONL append-only, Excel, manifest riproducibile e container NVIDIA.
 
 ## Protocollo dell'evaluation headless
 
-I tre modelli dello studio sono `qwen3.5:latest`, `ministral-3:8b` e
-`llama3.1:8b`, eseguiti un modello per processo. Per ogni modello: 106 pazienti,
+I tre modelli dello studio sul server 24 GB sono `qwen3.5:9b-bf16`,
+`ministral-3:8b-instruct-2512-fp16` e `llama3.1:8b-instruct-fp16`, eseguiti un
+modello per processo. I tag quantizzati `:latest`/`:8b` sono solo per sviluppo e
+smoke test, non per i risultati definitivi. Per ogni modello: 106 pazienti,
 20–30 run, tre step concatenati, con una lista prefissata di seed identica tra i
 modelli. Il test su Qwen ha verificato che stesso prompt + stesso seed produce
 output byte-per-byte identico e che seed diversi producono output diversi. Una configurazione da 30 run richiede 3.180 pipeline e 9.540 chiamate

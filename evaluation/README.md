@@ -6,15 +6,19 @@ stesso motore usato dall'applicazione FastAPI.
 
 ## Protocollo
 
-Modelli previsti, uno per processo:
+Modelli non quantizzati previsti, uno per processo:
 
-- `qwen3.5:latest` (9.7B)
-- `ministral-3:8b` (8.9B)
-- `llama3.1:8b` (8.0B)
+- `qwen3.5:9b-bf16` (9.7B, circa 19 GB)
+- `ministral-3:8b-instruct-2512-fp16` (8.9B, circa 18 GB)
+- `llama3.1:8b-instruct-fp16` (8.0B, circa 16 GB)
+
+I tag brevi `qwen3.5:latest`, `ministral-3:8b` e `llama3.1:8b` sono Q4 e
+non devono essere usati per i risultati definitivi.
 
 Per ogni modello e modalità RAG: 106 pazienti × 20/30 run × 3 step. I seed della
 run sono `seed_start + run - 1` e sono identici tra modelli e corpus. I seed dei
-tre step sono rispettivamente `seed`, `seed+1`, `seed+2`.
+tre step sono rispettivamente `seed`, `seed+1`, `seed+2`. La CLI rifiuta per
+default modelli quantizzati e modelli non quasi interamente residenti in VRAM.
 
 ## Modalità RAG
 
@@ -44,9 +48,9 @@ conda activate LLM_DEMENTIA
 ollama serve
 
 ollama pull bge-m3
-ollama pull qwen3.5:latest
-ollama pull ministral-3:8b
-ollama pull llama3.1:8b
+ollama pull qwen3.5:9b-bf16
+ollama pull ministral-3:8b-instruct-2512-fp16
+ollama pull llama3.1:8b-instruct-fp16
 
 python scripts/build_rag.py --force
 ```
@@ -70,22 +74,41 @@ rieseguito sul file definitivo prima dell'esperimento.
 ```bash
 python scripts/audit_dataset.py
 python -m evaluation.run \
-  --model qwen3.5:latest \
+  --model qwen3.5:9b-bf16 \
   --runs 30 \
   --rag-mode budson \
   --dry-run
 ```
 
-`--allow-data-warnings` esiste per prove tecniche, non va usato nell'esperimento
-definitivo senza motivazione nel protocollo.
+Prima delle run la CLI esegue un warm-up e interroga `/api/ps`: stampa GB e
+percentuale del modello in VRAM, bloccando CPU-only e offload parziale. I flag
+`--allow-quantized`, `--allow-partial-gpu` e `--allow-data-warnings` sono solo per
+smoke test e non vanno usati nell'esperimento definitivo.
 
 ## Esecuzione
+
+Il precalcolo può essere eseguito separatamente:
+
+```bash
+python -m evaluation.run \
+  --model qwen3.5:9b-bf16 \
+  --runs 30 \
+  --rag-mode budson \
+  --seed-start 1001 \
+  --cache-only
+```
+
+Crea subito `manifest.json`, `progress.json`, un `runs.jsonl` vuoto e i file
+paziente in `rag_cache/`. Non crea un Excel vuoto: `results.xlsx` nasce dopo la
+prima pipeline LLM completata. Cache e progressi sopravvivono a Ctrl+C. Le cache
+vecchie prive di `cache_version` vengono rigenerate automaticamente; la versione
+corrente usa query clinica pesata e produce contesti paziente-specifici.
 
 Esempio Qwen, 30 run, Budson:
 
 ```bash
 python -m evaluation.run \
-  --model qwen3.5:latest \
+  --model qwen3.5:9b-bf16 \
   --runs 30 \
   --rag-mode budson \
   --seed-start 1001
@@ -95,7 +118,7 @@ Casebook:
 
 ```bash
 python -m evaluation.run \
-  --model qwen3.5:latest \
+  --model qwen3.5:9b-bf16 \
   --runs 30 \
   --rag-mode casebook \
   --seed-start 1001
@@ -105,20 +128,20 @@ Entrambi:
 
 ```bash
 python -m evaluation.run \
-  --model qwen3.5:latest \
+  --model qwen3.5:9b-bf16 \
   --runs 30 \
   --rag-mode both \
   --seed-start 1001
 ```
 
-Ripetere gli stessi tre comandi sostituendo `--model` con `ministral-3:8b` e
-`llama3.1:8b`.
+Ripetere gli stessi tre comandi sostituendo `--model` con `ministral-3:8b-instruct-2512-fp16` e
+`llama3.1:8b-instruct-fp16`.
 
 ### Prova breve
 
 ```bash
 python -m evaluation.run \
-  --model qwen3.5:latest \
+  --model qwen3.5:9b-bf16 \
   --runs 2 \
   --rag-mode budson \
   --patients T1 T2 \
@@ -126,7 +149,9 @@ python -m evaluation.run \
   --allow-data-warnings
 ```
 
-Oppure usare `--limit 2`.
+Oppure usare `--limit 2`. Su una macchina di sviluppo con tag Q4 usare
+esplicitamente `--allow-quantized --allow-partial-gpu --allow-dirty`; queste
+opzioni non sono ammesse nell'esperimento definitivo.
 
 ## Resume
 
@@ -136,7 +161,7 @@ presenti vengono saltate.
 
 ```bash
 python -m evaluation.run \
-  --model qwen3.5:latest \
+  --model qwen3.5:9b-bf16 \
   --runs 30 \
   --rag-mode budson \
   --seed-start 1001
@@ -149,8 +174,10 @@ python -m evaluation.run \
 - `--excel-every 20`: frequenza dei checkpoint Excel.
 - `--force-unlock`: rimuove un lock residuo, solo dopo aver escluso processi attivi.
 
-Ctrl+C non perde le pipeline già concluse. Una pipeline interrotta a metà non
-viene registrata come completa e verrà rieseguita con lo stesso seed.
+Ctrl+C durante il precalcolo conserva ogni cache già scritta; al rilancio queste
+vengono lette e si riparte dal primo paziente mancante. Ctrl+C durante le run non
+perde le pipeline concluse. `progress.json` indica fase, paziente e contatori.
+Una pipeline interrotta a metà verrà rieseguita con lo stesso seed.
 
 ## Output
 
@@ -159,8 +186,9 @@ Percorso predefinito:
 ```text
 results/evaluation/<modello>__<rag_mode>/
 ├── manifest.json
+├── progress.json
 ├── runs.jsonl
-├── results.xlsx
+├── results.xlsx  # solo dopo la prima run LLM completata
 └── rag_cache/
 ```
 
@@ -221,20 +249,22 @@ stesso confronto.
 Dalla root del repository, con Docker e NVIDIA Container Toolkit:
 
 ```bash
+export HOST_UID=$(id -u)
+export HOST_GID=$(id -g)
 export GIT_COMMIT=$(git rev-parse HEAD)
 docker compose build
 
 docker compose up -d ollama
 docker compose exec ollama ollama pull bge-m3
-docker compose exec ollama ollama pull qwen3.5:latest
-docker compose exec ollama ollama pull ministral-3:8b
-docker compose exec ollama ollama pull llama3.1:8b
+docker compose exec ollama ollama pull qwen3.5:9b-bf16
+docker compose exec ollama ollama pull ministral-3:8b-instruct-2512-fp16
+docker compose exec ollama ollama pull llama3.1:8b-instruct-fp16
 
 docker compose run --rm app python scripts/build_rag.py --force
 
 docker compose run --rm evaluation \
   python -m evaluation.run \
-  --model qwen3.5:latest \
+  --model qwen3.5:9b-bf16 \
   --runs 30 \
   --rag-mode budson \
   --seed-start 1001

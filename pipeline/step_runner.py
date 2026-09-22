@@ -24,6 +24,7 @@ from config.settings import (
     LLM_RETRIES_ON_INVALID,
     LLM_TEMPERATURE,
     OLLAMA_MODEL,
+    RAG_CLINICAL_QUERY_WEIGHT,
     RAG_CORPORA,
     RAG_DEFAULT_MODE,
     RAG_STEPS,
@@ -352,23 +353,33 @@ def prepare_rag_bundle(
             "step": step,
             "rag_mode": rag_mode,
             "allowed_sources": sorted(allowed_sources),
+            "clinical_query_weight": RAG_CLINICAL_QUERY_WEIGHT,
             "queries": [],
             "context": context,
             "sources": [],
             "sha256": hashlib.sha256(context.encode("utf-8")).hexdigest(),
         }
 
-    queries = build_queries(step, clinical_context=_clinical_context(record))
+    clinical_context = _clinical_context(record)
+    queries = build_queries(step, clinical_context=clinical_context)
+    clinical_query_index = len(queries) - 1 if clinical_context else None
     docs = retrieve_context(
-        child_store, parent_store, queries, allowed_sources=allowed_sources
+        child_store,
+        parent_store,
+        queries,
+        allowed_sources=allowed_sources,
+        clinical_query_index=clinical_query_index,
     )
     context = format_context_for_prompt(docs)
     sources = extract_rag_sources(docs)
-    digest_material = rag_mode + "\0" + "\n".join(queries) + "\0" + context
+    digest_material = (
+        f"{rag_mode}\0{RAG_CLINICAL_QUERY_WEIGHT}\0" + "\n".join(queries) + "\0" + context
+    )
     return {
         "step": step,
         "rag_mode": rag_mode,
         "allowed_sources": sorted(allowed_sources),
+        "clinical_query_weight": RAG_CLINICAL_QUERY_WEIGHT,
         "queries": queries,
         "context": context,
         "sources": sources,

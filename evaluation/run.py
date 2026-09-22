@@ -42,6 +42,9 @@ from pipeline.evaluator import concordance_record, extract_llm_diagnosis
 from pipeline.step_runner import prepare_rag_bundle, run_full_pipeline
 from rag.vector_store import iter_child_corpus, load_existing_store
 
+RAG_CACHE_VERSION = 2
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -76,6 +79,48 @@ def git_info() -> dict:
                 "git_error": str(exc)}
 
 
+def is_unquantized(model_info: dict) -> bool:
+    level = str((model_info.get("details") or {}).get("quantization_level") or "").upper()
+    return level in {"F16", "FP16", "BF16", "F32", "FP32"}
+
+
+def warmup_and_gpu_info(model: str) -> dict:
+    response = requests.post(
+        f"{OLLAMA_BASE_URL}/api/generate",
+        json={
+            "model": model,
+            "prompt": "Rispondi solo: OK",
+            "stream": False,
+            "keep_alive": -1,
+            "options": {
+                "temperature": 0,
+                "num_predict": 2,
+                "num_ctx": LLM_NUM_CTX,
+                "seed": 0,
+            },
+        },
+        timeout=600,
+    )
+    response.raise_for_status()
+    processes = requests.get(f"{OLLAMA_BASE_URL}/api/ps", timeout=10)
+    processes.raise_for_status()
+    loaded = processes.json().get("models", [])
+    target = next(
+        (item for item in loaded if str(item.get("name", "")).lower() == model.lower()),
+        None,
+    )
+    if target is None:
+        raise RuntimeError(f"Modello {model} non risulta caricato dopo il warm-up")
+    size = int(target.get("size") or 0)
+    size_vram = int(target.get("size_vram") or 0)
+    return {
+        **target,
+        "size": size,
+        "size_vram": size_vram,
+        "vram_fraction": round(size_vram / size, 4) if size else None,
+    }
+
+
 def runtime_info() -> dict:
     info = {
         "python": sys.version,
@@ -102,6 +147,18 @@ def runtime_info() -> dict:
     except Exception:
         info["gpu"] = "non disponibile"
     return info
+
+
+def check_required_files(rag_mode: str) -> None:
+    required = [Path(DATABASE_PATH), Path(REFERENCE_VALUES_PATH)] + [
+        Path(DOCS_FOLDER) / name for name in RAG_CORPORA[rag_mode]
+    ]
+    missing = [str(path) for path in required if not path.is_file()]
+    if missing:
+        raise FileNotFoundError(
+            "File richiesti mancanti:\n  - " + "\n  - ".join(missing)
+            + "\nDatabase e manuali non sono versionati: vedere SERVER_README.md."
+        )
 
 
 def data_warnings(df: pd.DataFrame) -> list[str]:
@@ -157,6 +214,7 @@ def build_manifest(args, patients: list[str], model_info: dict, warnings: list[s
             for path in corpus_files
         ],
         "embedding_model": OLLAMA_EMBED_MODEL,
+        "rag_cache_version": RAG_CACHE_VERSION,
         "dataset": {"path": Path(DATABASE_PATH).name, "sha256": sha256_file(DATABASE_PATH)},
         "reference_values": {
             "path": Path(REFERENCE_VALUES_PATH).name,
@@ -182,6 +240,19 @@ def build_manifest(args, patients: list[str], model_info: dict, warnings: list[s
     }
 
 
+def ensure_writable(directory: Path) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    probe = directory / f".write_test_{os.getpid()}"
+    try:
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        raise PermissionError(
+            f"Directory non scrivibile: {directory}. Correggere owner/permessi "
+            "prima di avviare l'evaluation."
+        ) from exc
+
+
 def write_json(path: Path, value: dict) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(
@@ -198,6 +269,22 @@ def append_jsonl(path: Path, value: dict) -> None:
         os.fsync(handle.fileno())
 
 
+def write_progress(path: Path, **values) -> None:
+    current = {}
+    if path.exists():
+        try:
+            current = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            current = {}
+    current.update(values)
+    current["updated_at"] = utc_now()
+    write_json(path, current)
+
+
+def has_jsonl_records(path: Path) -> bool:
+    return path.exists() and path.stat().st_size > 0
+
+
 def load_or_build_rag_cache(
     cache_dir: Path,
     patient_code: str,
@@ -211,13 +298,18 @@ def load_or_build_rag_cache(
     cache_path = cache_dir / f"{patient_code}.json"
     if cache_path.exists() and not refresh:
         cached = json.loads(cache_path.read_text(encoding="utf-8"))
-        if cached.get("rag_mode") == rag_mode and cached.get("dataset_sha256") == dataset_hash:
+        if (
+            cached.get("cache_version") == RAG_CACHE_VERSION
+            and cached.get("rag_mode") == rag_mode
+            and cached.get("dataset_sha256") == dataset_hash
+        ):
             return cached["bundle"]
 
     bundle = prepare_rag_bundle(
         1, record, parent_store, child_store, rag_mode=rag_mode
     )
     write_json(cache_path, {
+        "cache_version": RAG_CACHE_VERSION,
         "patient_code": patient_code,
         "rag_mode": rag_mode,
         "dataset_sha256": dataset_hash,
@@ -325,8 +417,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, default=BASE_DIR / "results" / "evaluation")
     parser.add_argument("--experiment-name")
     parser.add_argument("--refresh-rag-cache", action="store_true")
+    parser.add_argument("--cache-only", action="store_true")
     parser.add_argument("--retry-errors", action="store_true")
     parser.add_argument("--allow-data-warnings", action="store_true")
+    parser.add_argument("--allow-quantized", action="store_true")
+    parser.add_argument("--allow-partial-gpu", action="store_true")
     parser.add_argument("--allow-dirty", action="store_true")
     parser.add_argument("--force-unlock", action="store_true")
     parser.add_argument("--no-excel", action="store_true")
@@ -340,11 +435,18 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    check_required_files(args.rag_mode)
     if not is_ollama_running():
         sys.exit(f"Ollama non raggiungibile su {OLLAMA_BASE_URL}")
     model_info = get_model_info(args.model)
     if model_info is None:
         sys.exit(f"Modello non installato: {args.model}")
+    if not args.allow_quantized and not is_unquantized(model_info):
+        level = (model_info.get("details") or {}).get("quantization_level", "sconosciuto")
+        sys.exit(
+            f"Il modello {args.model} è quantizzato ({level}). Per lo studio usare "
+            "un tag FP16/BF16; --allow-quantized è riservato agli smoke test."
+        )
 
     df = get_database()
     warnings = data_warnings(df)
@@ -361,6 +463,7 @@ def main() -> None:
     jsonl_path = output_dir / "runs.jsonl"
     manifest_path = output_dir / "manifest.json"
     excel_path = output_dir / "results.xlsx"
+    progress_path = output_dir / "progress.json"
     lock_path = output_dir / ".evaluation.lock"
 
     manifest = build_manifest(args, patients, model_info, warnings)
@@ -371,7 +474,9 @@ def main() -> None:
         )
     if manifest_path.exists():
         existing = json.loads(manifest_path.read_text(encoding="utf-8"))
-        immutable = ("model", "rag_mode", "patients", "corpus", "generation")
+        immutable = (
+            "model", "rag_mode", "rag_cache_version", "patients", "corpus", "generation"
+        )
         mismatches = [key for key in immutable if existing.get(key) != manifest.get(key)]
         nested_checks = (
             ("dataset.sha256", existing.get("dataset", {}).get("sha256"), manifest["dataset"]["sha256"]),
@@ -383,10 +488,17 @@ def main() -> None:
         )
         mismatches.extend(name for name, old, new in nested_checks if old != new)
         if mismatches:
-            sys.exit(f"Manifest incompatibile per resume: {', '.join(mismatches)}")
-        existing["requested_runs"] = max(existing.get("requested_runs", 0), args.runs)
-        existing["last_resumed_at"] = utc_now()
-        manifest = existing
+            has_completed_runs = bool(read_jsonl(jsonl_path))
+            if has_completed_runs:
+                sys.exit(f"Manifest incompatibile per resume: {', '.join(mismatches)}")
+            print(
+                "Manifest/cache obsoleti senza run completate: verranno aggiornati "
+                f"({', '.join(mismatches)})."
+            )
+        else:
+            existing["requested_runs"] = max(existing.get("requested_runs", 0), args.runs)
+            existing["last_resumed_at"] = utc_now()
+            manifest = existing
     total = len(patients) * args.runs
     done = completed_keys(jsonl_path, args.retry_errors)
     pending = [(code, run) for code in patients for run in range(1, args.runs + 1)
@@ -402,16 +514,29 @@ def main() -> None:
     if args.dry_run:
         return
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    cache_dir.mkdir(exist_ok=True)
+    ensure_writable(output_dir)
+    ensure_writable(cache_dir)
     write_json(manifest_path, manifest)
+    jsonl_path.touch(exist_ok=True)
+    if not has_jsonl_records(jsonl_path) and excel_path.exists():
+        excel_path.unlink()
     if not pending:
-        if not args.no_excel:
+        if not args.no_excel and has_jsonl_records(jsonl_path):
             export_excel(jsonl_path, excel_path, manifest)
         print("Nessuna run da eseguire: esperimento già completo per il target richiesto.")
         return
 
     lock_descriptor = acquire_lock(lock_path, args.force_unlock)
+    interrupted = False
+    write_progress(
+        progress_path,
+        status="running",
+        stage="rag_cache",
+        rag_cached=0,
+        rag_total=len(patients),
+        runs_completed=len(done),
+        runs_total=total,
+    )
     try:
         parent_store, child_store = load_existing_store()
         if parent_store is None:
@@ -427,9 +552,46 @@ def main() -> None:
                 cache_dir, code, record, args.rag_mode, dataset_hash,
                 parent_store, child_store, args.refresh_rag_cache,
             )
+            write_progress(
+                progress_path,
+                stage="rag_cache",
+                current_patient=code,
+                rag_cached=index,
+                rag_total=len(patients),
+            )
             print(f"  RAG {index}/{len(patients)} {code}", end="\r")
         print()
+        if args.cache_only:
+            write_progress(
+                progress_path, status="completed", stage="rag_cache_done", current_patient=None
+            )
+            print("Cache RAG completata. Nessuna chiamata LLM eseguita (--cache-only).")
+            return
 
+        print("Warm-up modello e verifica GPU...")
+        model_runtime = warmup_and_gpu_info(args.model)
+        manifest["model_runtime"] = model_runtime
+        write_json(manifest_path, manifest)
+        vram_fraction = model_runtime.get("vram_fraction") or 0.0
+        print(
+            f"  VRAM modello: {model_runtime.get('size_vram', 0) / 1024**3:.2f} GB "
+            f"su {model_runtime.get('size', 0) / 1024**3:.2f} GB "
+            f"({vram_fraction:.1%})"
+        )
+        if model_runtime.get("size_vram", 0) <= 0:
+            raise RuntimeError("Ollama non sta usando la GPU")
+        if vram_fraction < 0.95 and not args.allow_partial_gpu:
+            raise RuntimeError(
+                "Il modello non è interamente residente in VRAM. Verificare NVIDIA "
+                "Container Toolkit/driver o usare --allow-partial-gpu solo per test."
+            )
+
+        write_progress(
+            progress_path,
+            stage="llm_runs",
+            current_patient=None,
+            model_vram_fraction=vram_fraction,
+        )
         completed_count = len(done)
         for code, run_number in pending:
             seed = args.seed_start + run_number - 1
@@ -464,6 +626,15 @@ def main() -> None:
                 )
             append_jsonl(jsonl_path, output)
             completed_count += 1
+            write_progress(
+                progress_path,
+                stage="llm_runs",
+                current_patient=code,
+                current_run=run_number,
+                runs_completed=completed_count,
+                runs_total=total,
+                last_run_status=output["status"],
+            )
             elapsed = time.time() - start
             print(
                 f"[{completed_count}/{total}] {code} run={run_number} seed={seed} "
@@ -472,13 +643,26 @@ def main() -> None:
             if not args.no_excel and completed_count % max(1, args.excel_every) == 0:
                 export_excel(jsonl_path, excel_path, manifest)
     except KeyboardInterrupt:
-        print("\nInterruzione richiesta: il JSONL è già salvato e il comando è resumable.")
+        interrupted = True
+        write_progress(progress_path, status="interrupted")
+        print("\nInterruzione richiesta: cache e run completate sono salvate; il comando è resumable.")
+    except BaseException as exc:
+        write_progress(
+            progress_path,
+            status="failed",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
     finally:
         os.close(lock_descriptor)
         lock_path.unlink(missing_ok=True)
 
-    if not args.no_excel:
+    if not interrupted:
+        write_progress(progress_path, status="completed", stage="done")
+    if not args.no_excel and has_jsonl_records(jsonl_path):
         export_excel(jsonl_path, excel_path, manifest)
+    elif not has_jsonl_records(jsonl_path):
+        print("Nessuna pipeline LLM completata: Excel non creato; runs.jsonl è ancora vuoto.")
     print("Evaluation terminata.")
 
 
