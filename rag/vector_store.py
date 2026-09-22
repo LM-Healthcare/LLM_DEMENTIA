@@ -84,21 +84,27 @@ def _reset_store() -> None:
     print(f"[VectorStore] Azzeramento indice esistente: {path}")
     try:
         import chromadb
+        from chromadb.api.client import SharedSystemClient
 
         client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+        existing = {collection.name for collection in client.list_collections()}
         for name in (PARENT_COLLECTION, CHILD_COLLECTION):
-            try:
+            if name in existing:
                 client.delete_collection(name)
                 print(f"[VectorStore]   collezione '{name}' eliminata")
-            except Exception:
-                pass
         del client
+        SharedSystemClient.clear_system_cache()
+        return
     except BaseException as e:
         print(f"[VectorStore]   API Chroma non utilizzabile ({type(e).__name__}), procedo su file")
+        try:
+            SharedSystemClient.clear_system_cache()
+        except BaseException:
+            pass
 
     shutil.rmtree(path, ignore_errors=True)
     if path.exists():
-        print("[VectorStore]   cartella non rimovibile (file in uso): collezioni comunque azzerate")
+        print("[VectorStore]   mountpoint conservato, contenuto dell'indice eliminato")
 
 
 def load_existing_store() -> tuple[Chroma | None, Chroma | None]:
