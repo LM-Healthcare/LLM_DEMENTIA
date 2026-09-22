@@ -441,7 +441,7 @@ Il codice paziente nel JSON deve essere: {patient.get('codice', 'N/D')}"""
 
 def build_step3_prompt(
     patient: dict,
-    step2_result: dict,
+    step2_result: dict | None,
     terapia_formatted: str,
     biomarker_assessment: dict,
     step1_result: dict | None = None,

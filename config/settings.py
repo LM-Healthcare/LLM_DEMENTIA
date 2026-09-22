@@ -14,6 +14,17 @@ CHROMA_DB_PATH: str = os.getenv("CHROMA_DB_PATH", str(BASE_DIR / "chroma_db"))
 
 # Knowledge base RAG: cartella unica, scansionata ricorsivamente.
 DOCS_FOLDER: str = os.getenv("DOCS_FOLDER", str(BASE_DIR / "Documenti_"))
+RAG_CORPORA: dict[str, tuple[str, ...]] = {
+    "budson": ("Budson e Solomon - A Practical Guide for Clinicians.pdf",),
+    "casebook": ("Casebook_of_Dementia.pdf",),
+    "both": (
+        "Budson e Solomon - A Practical Guide for Clinicians.pdf",
+        "Casebook_of_Dementia.pdf",
+    ),
+}
+RAG_DEFAULT_MODE: str = os.getenv("RAG_DEFAULT_MODE", "budson").strip().lower()
+if RAG_DEFAULT_MODE not in RAG_CORPORA:
+    raise ValueError(f"RAG_DEFAULT_MODE non valido: {RAG_DEFAULT_MODE}")
 
 DATABASE_PATH: str = os.getenv("DATABASE_PATH", str(BASE_DIR / "Database_FINALE_codificato.xlsx"))
 REFERENCE_VALUES_PATH: str = os.getenv("REFERENCE_VALUES_PATH", str(BASE_DIR / "Valori di riferimento_lab.xlsx"))
@@ -36,8 +47,9 @@ RAG_CANDIDATES_PER_QUERY: int = int(os.getenv("RAG_CANDIDATES_PER_QUERY", "10"))
 RAG_BM25_WEIGHT: float = float(os.getenv("RAG_BM25_WEIGHT", "0.4"))
 # Costante della Reciprocal Rank Fusion.
 RAG_RRF_K: int = int(os.getenv("RAG_RRF_K", "60"))
-# Massimo numero di fonti provenienti dalla stessa pagina (diversificazione).
+# Diversificazione delle fonti finali.
 RAG_MAX_PER_PAGE: int = int(os.getenv("RAG_MAX_PER_PAGE", "2"))
+RAG_MAX_PER_SOURCE: int = int(os.getenv("RAG_MAX_PER_SOURCE", "5"))
 
 # Step in cui iniettare il contesto della knowledge base. Per impostazione
 # predefinita solo lo Step 1: gli step successivi si basano sui biomarcatori,
@@ -65,10 +77,13 @@ DIAGNOSIS_LABELS = {
     "SCD": "Disturbo Soggettivo di Memoria",
     "LATE": "TDP-43 Encephalopathy (LATE)",
     "FTD": "Demenza Frontotemporale",
-    "PD": "Malattia di Parkinson",
+    "PD": "Demenza associata a Parkinson / spettro Lewy body (PDD/DLB)",
 }
 
 AD_PPA_VARIANTS = ["AD -PPA", "AD-PPA", "AD_PPA", "AD PPA"]
+
+# Outlier verificati e confermati dal team clinico; restano nei dati e nel manifest.
+ACCEPTED_EXTREME_VALUES: frozenset[tuple[str, str]] = frozenset({("T81", "CSF_NfL")})
 
 # ─── Valori di riferimento dei biomarcatori ───────────────────────────────────
 # Unica fonte di verità: da qui si generano sia il blocco del system prompt sia

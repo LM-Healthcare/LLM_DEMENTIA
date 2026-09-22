@@ -87,6 +87,7 @@ def evaluate_batch(
     records = []
     step_preds: dict[int, list] = {1: [], 2: [], 3: []}
     step_truths: dict[int, list] = {1: [], 2: [], 3: []}
+    step_eligible: dict[int, int] = {1: 0, 2: 0, 3: 0}
 
     for pr, gt in zip(pipeline_results, ground_truths):
         patient_code = pr.get("step1", {}).get("patient_code", "?")
@@ -103,12 +104,17 @@ def evaluate_batch(
             reported_conf = extract_reported_confidence(sr)
             concord = concordance_record(llm_diag, gt)
             feasible = sr.get("feasible", False)
+            eligible = sr.get("eligible", feasible)
+            if eligible:
+                step_eligible[step] += 1
 
             consistency = extract_consistency(sr)
             record[f"step{step}_prediction"] = llm_diag
             record[f"step{step}_confidence"] = conf
             record[f"step{step}_reported_confidence"] = reported_conf
             record[f"step{step}_concordant"] = concord
+            record[f"step{step}_eligible"] = eligible
+            record[f"step{step}_execution_status"] = sr.get("execution_status")
             record[f"step{step}_feasible"] = feasible
             record[f"step{step}_duration_s"] = sr.get("duration_s", 0)
             parse_metadata = sr.get("parse_metadata") or {}
@@ -142,13 +148,17 @@ def evaluate_batch(
         truths = step_truths[step]
         if preds:
             metrics_per_step[f"step{step}"] = _compute_metrics(
-                preds, truths, total_cases=len(records)
+                preds, truths, total_cases=step_eligible[step]
+            )
+            metrics_per_step[f"step{step}"]["n_ineligible"] = (
+                len(records) - step_eligible[step]
             )
         else:
             metrics_per_step[f"step{step}"] = {
-                "n_total": len(records),
+                "n_total": step_eligible[step],
+                "n_ineligible": len(records) - step_eligible[step],
                 "n_evaluated": 0,
-                "n_invalid": len(records),
+                "n_invalid": step_eligible[step],
                 "accuracy": 0.0,
                 "valid_output_accuracy": None,
                 "error": "Nessuna predizione disponibile",
@@ -225,14 +235,17 @@ def _build_summary(records: list[dict], metrics: dict) -> dict:
     for step in [1, 2, 3]:
         key = f"step{step}"
         feasible = sum(1 for r in records if r.get(f"{key}_feasible"))
+        eligible = sum(1 for r in records if r.get(f"{key}_eligible"))
         concordant = sum(1 for r in records if r.get(f"{key}_concordant") is True)
         m = metrics.get(key, {})
         summary[key] = {
+            "eligible_patients": eligible,
+            "ineligible_patients": total - eligible,
             "feasible_patients": feasible,
             "concordant_patients": concordant,
             "accuracy": m.get("accuracy", 0),
             "valid_output_accuracy": m.get("valid_output_accuracy"),
-            "invalid_outputs": m.get("n_invalid", total),
+            "invalid_outputs": m.get("n_invalid", eligible),
             "cohen_kappa": m.get("cohen_kappa", 0),
             # Quante risposte erano internamente contraddittorie: un'accuracy
             # calcolata su output incoerenti va interpretata con cautela.

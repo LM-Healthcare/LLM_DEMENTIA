@@ -1,7 +1,7 @@
 import type {
   PatientSummary, PatientDetail, DBStats,
   StepResult, PipelineResult, BatchProgress,
-  ModelInfo, RAGStatus, ResultFile, EvaluationData,
+  ModelInfo, RagMode, RAGStatus, ResultFile, EvaluationData,
 } from '@/types'
 
 const BASE = '/api'
@@ -30,6 +30,7 @@ export const api = {
     step: number
     model: string
     seed?: number | null
+    rag_mode?: RagMode
     step1_result?: object | null
     step2_result?: object | null
   }) => request<StepResult>('/analysis/step', {
@@ -37,13 +38,13 @@ export const api = {
     body: JSON.stringify(payload),
   }),
 
-  runPipeline: (payload: { patient_code: string; model: string; seed?: number | null }) =>
+  runPipeline: (payload: { patient_code: string; model: string; seed?: number | null; rag_mode?: RagMode }) =>
     request<PipelineResult>('/analysis/pipeline', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
 
-  runBatch: (payload: { model: string; patient_codes?: string[] }) =>
+  runBatch: (payload: { model: string; rag_mode?: RagMode; seed?: number | null; patient_codes?: string[] }) =>
     request<{ message: string; total: number }>('/analysis/batch', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -54,6 +55,7 @@ export const api = {
   saveIndividual: (payload: {
     patient_code: string
     model: string
+    rag_mode?: RagMode
     step1?: object | null
     step2?: object | null
     step3?: object | null

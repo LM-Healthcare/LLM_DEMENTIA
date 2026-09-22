@@ -5,7 +5,12 @@ from __future__ import annotations
 import math
 
 from config.settings import REFERENCE_VALUES, reference_range
-from data.loader import CSF_BIOMARKER_COLS, PLASMA_BIOMARKER_COLS, SAFETY_LAB_COLS
+from data.loader import (
+    CSF_BIOMARKER_COLS,
+    PLASMA_BIOMARKER_COLS,
+    PLASMA_HIERARCHY_COLS,
+    SAFETY_LAB_COLS,
+)
 
 _LOW_IS_PATHOLOGICAL = {"CSF_Ab42", "CSF_Ab4240", "Plasma_Ab4240"}
 _HIGH_IS_PATHOLOGICAL = {
@@ -160,10 +165,28 @@ def _concordance(plasma: dict[str, dict], csf: dict[str, dict]) -> dict:
     return output
 
 
+def _plasma_hierarchy(plasma: dict[str, dict]) -> dict:
+    selected = next(
+        (name for name in PLASMA_HIERARCHY_COLS if plasma[name]["value"] is not None),
+        None,
+    )
+    return {
+        "priority": PLASMA_HIERARCHY_COLS,
+        "selected_marker": selected,
+        "selected_assessment": plasma.get(selected) if selected else None,
+        "core_available": selected is not None,
+        "nfl_available": plasma["plasma_NfL"]["value"] is not None,
+        "rule": (
+            "Usare il primo disponibile: p-tau217, poi p-tau181, poi plasma Aβ42/40. "
+            "Plasma NfL è solo informazione aggiuntiva e non dirimente."
+        ),
+    }
+
+
 def compute_biomarker_assessment(record: dict, step: int) -> dict:
     plasma = {name: assess_marker(name, record.get(name)) for name in PLASMA_BIOMARKER_COLS}
     safety = assess_safety_labs(record)
-    output = {"plasma": plasma, "safety": safety}
+    output = {"plasma": plasma, "plasma_hierarchy": _plasma_hierarchy(plasma), "safety": safety}
     if step >= 3:
         csf = {name: assess_marker(name, record.get(name)) for name in CSF_BIOMARKER_COLS}
         output.update({
@@ -183,6 +206,13 @@ def format_biomarker_assessment(assessment: dict, step: int) -> str:
                 f"  - {name}: {item['status']} "
                 f"(valore={item['value']}, riferimento={item['reference'] or 'N/D'})"
             )
+        hierarchy = assessment["plasma_hierarchy"]
+        selected = hierarchy["selected_marker"] or "NESSUNO"
+        lines.extend([
+            f"Marcatore plasmatico primario secondo gerarchia: {selected}",
+            f"Regola gerarchica: {hierarchy['rule']}",
+            f"Plasma NfL aggiuntivo disponibile: {'SÌ' if hierarchy['nfl_available'] else 'NO'}",
+        ])
         safety = assessment["safety"]
         lines.extend([
             f"Funzione renale: {safety['renal_status']}",

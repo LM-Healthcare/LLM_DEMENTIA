@@ -48,6 +48,7 @@ def run_single_step(req: RunStepRequest):
         step1_result=req.step1_result,
         step2_result=req.step2_result,
         seed=req.seed,
+        rag_mode=req.rag_mode,
     )
     return StepResult(**result)
 
@@ -64,6 +65,7 @@ def run_pipeline(req: RunPipelineRequest):
         parent_store=state.parent_store,
         child_store=state.child_store,
         seed=req.seed,
+        rag_mode=req.rag_mode,
     )
     results["ground_truth"] = gt
     results["patient_code"] = req.patient_code
@@ -78,13 +80,20 @@ async def run_batch(req: BatchRunRequest, background_tasks: BackgroundTasks):
 
     codes = req.patient_codes or get_all_codes(get_database())
 
-    background_tasks.add_task(_batch_task, codes, req.model, req.seed, state)
+    background_tasks.add_task(_batch_task, codes, req.model, req.rag_mode, req.seed, state)
     return {"message": f"Batch avviato per {len(codes)} pazienti", "total": len(codes)}
 
 
-async def _batch_task(codes: list[str], model: str, seed: int | None, state):
+async def _batch_task(codes: list[str], model: str, rag_mode: str, seed: int | None, state):
     state.batch_running = True
-    state.batch_progress = {"current": 0, "total": len(codes), "status": "running", "errors": []}
+    state.batch_progress = {
+        "current": 0,
+        "total": len(codes),
+        "status": "running",
+        "model": model,
+        "rag_mode": rag_mode,
+        "errors": [],
+    }
 
     df = get_database()
     pipeline_results: list[dict] = []
@@ -121,6 +130,7 @@ async def _batch_task(codes: list[str], model: str, seed: int | None, state):
                         parent_store=state.parent_store,
                         child_store=state.child_store,
                         seed=None if seed is None else seed + i * 10,
+                        rag_mode=rag_mode,
                     )
                 )
                 pipeline_results.append(result)
@@ -165,6 +175,7 @@ def save_individual(req: SaveIndividualRequest):
         "patient_code": req.patient_code,
         "ground_truth": get_ground_truth(record),
         "model": req.model,
+        "rag_mode": req.rag_mode,
         "timestamp": ts,
         "step1": req.step1,
         "step2": req.step2,

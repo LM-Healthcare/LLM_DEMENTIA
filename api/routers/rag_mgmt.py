@@ -7,7 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from api.schemas import RAGStatus
 from api.state import get_app_state
-from config.settings import DOCS_FOLDER
+from config.settings import DOCS_FOLDER, RAG_CORPORA
 from rag.document_processor import load_all_documents, create_parent_chunks, create_child_chunks
 from rag.retriever import reset_lexical_index
 from rag.vector_store import build_vector_store, load_existing_store, get_store_stats
@@ -33,6 +33,7 @@ def rag_status():
         parent_chunks=stats.get("parent_chunks", 0),
         child_chunks=stats.get("child_chunks", 0),
         embedding_model=stats.get("embedding_model", ""),
+        corpora={name: list(sources) for name, sources in RAG_CORPORA.items()},
         documents=docs_info,
     )
 

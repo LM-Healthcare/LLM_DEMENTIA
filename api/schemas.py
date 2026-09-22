@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -35,6 +35,7 @@ class RunStepRequest(BaseModel):
     patient_code: str
     step: int
     model: str
+    rag_mode: Literal["budson", "casebook", "both"] = "budson"
     seed: Optional[int] = None
     step1_result: Optional[dict] = None
     step2_result: Optional[dict] = None
@@ -43,11 +44,13 @@ class RunStepRequest(BaseModel):
 class RunPipelineRequest(BaseModel):
     patient_code: str
     model: str
+    rag_mode: Literal["budson", "casebook", "both"] = "budson"
     seed: Optional[int] = None
 
 
 class BatchRunRequest(BaseModel):
     model: str
+    rag_mode: Literal["budson", "casebook", "both"] = "budson"
     seed: Optional[int] = None
     patient_codes: Optional[list[str]] = None
 
@@ -55,6 +58,7 @@ class BatchRunRequest(BaseModel):
 class SaveIndividualRequest(BaseModel):
     patient_code: str
     model: str
+    rag_mode: Literal["budson", "casebook", "both"] = "budson"
     step1: Optional[dict] = None
     step2: Optional[dict] = None
     step3: Optional[dict] = None
@@ -82,6 +86,8 @@ class RagSource(BaseModel):
 class StepResult(BaseModel):
     step: int
     patient_code: str
+    eligible: bool = True
+    execution_status: str = "completed"
     feasible: bool
     skip_reason: Optional[str]
     result: Optional[dict]
@@ -106,6 +112,7 @@ class PipelineResult(BaseModel):
     step2: StepResult
     step3: StepResult
     model: Optional[str] = None
+    rag_mode: Literal["budson", "casebook", "both"] = "budson"
     base_seed: Optional[int] = None
     step_seeds: dict[int, Optional[int]] = Field(default_factory=dict)
     rag_bundle_sha256: Optional[str] = None
@@ -129,6 +136,7 @@ class RAGStatus(BaseModel):
     parent_chunks: int
     child_chunks: int
     embedding_model: str = ""
+    corpora: dict[str, list[str]] = Field(default_factory=dict)
     documents: list[dict]
 
 

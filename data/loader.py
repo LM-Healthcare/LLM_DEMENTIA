@@ -26,7 +26,10 @@ STEP1_CLINICAL_COLS = [
     "Age", "Gender", "Anni_edu",
 ]
 
-# Step 2: biomarcatori di neurodegenerazione su sangue.
+# Step 2: gerarchia concordata col neurologo. Si usa il primo disponibile;
+# NfL resta un indicatore aggiuntivo, non dirimente.
+PLASMA_HIERARCHY_COLS = ["plasma_ptau217", "plasma_pt181", "Plasma_Ab4240"]
+PLASMA_SUPPORTIVE_COLS = ["plasma_NfL"]
 PLASMA_BIOMARKER_COLS = ["Plasma_Ab4240", "plasma_ptau217", "plasma_pt181", "plasma_NfL"]
 
 # Step 2: indici epato-renali. Non sono biomarcatori diagnostici: servono a

@@ -38,6 +38,7 @@ results/*.html
 results/*.csv
 results/*.pdf
 results/individual/
+results/evaluation/
 
 # Liste di lavoro generate dagli script
 FARMACI_NON_IDENTIFICATI.txt

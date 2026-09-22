@@ -160,6 +160,7 @@ def verify(record: dict, dump: int | None) -> bool:
             ok &= check("biomarcatori plasmatici", "BIOMARCATORI EMATICI" in user)
             ok &= check("indici epato-renali", "FUNZIONALITÀ EPATO-RENALE" in user)
             ok &= check("interpretazione deterministica", "CALCOLATA DAL SISTEMA" in user)
+            ok &= check("gerarchia plasma", "Marcatore plasmatico primario" in user)
             ok &= check("output integrale step 1", "RAGIONAMENTO_STEP1_SENTINELLA" in user)
             ok &= check("differenziali step 1 con motivazione", "DIFFERENZIALE_STEP1_SENTINELLA" in user)
             ok &= check("sintesi step 1", "SINTESI_STEP1_SENTINELLA" in user)

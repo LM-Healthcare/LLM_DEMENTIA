@@ -26,6 +26,8 @@ export interface PatientDetail extends PatientSummary {
   safety_labs: Record<string, number | null>
 }
 
+export type RagMode = 'budson' | 'casebook' | 'both'
+
 export interface RagSource {
   index: number
   source: string
@@ -54,6 +56,8 @@ export interface RagEvidence {
 export interface StepResult {
   step: number
   patient_code: string
+  eligible: boolean
+  execution_status: string
   feasible: boolean
   skip_reason: string | null
   result: StepOutput | null
@@ -121,6 +125,7 @@ export interface PipelineResult {
   step2: StepResult
   step3: StepResult
   model?: string | null
+  rag_mode?: string
   base_seed?: number | null
   step_seeds?: Record<string, number | null>
   rag_bundle_sha256?: string | null
@@ -140,6 +145,7 @@ export interface RAGStatus {
   parent_chunks: number
   child_chunks: number
   embedding_model: string
+  corpora: Record<string, string[]>
   documents: Array<{ name: string; folder: string; size_kb: number }>
 }
 

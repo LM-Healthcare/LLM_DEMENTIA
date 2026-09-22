@@ -35,6 +35,7 @@ def main() -> None:
     ap.add_argument("--model", required=True, help="nome del modello Ollama")
     ap.add_argument("--code", help="codice paziente (default: il primo con CSF)")
     ap.add_argument("--seed", type=int, default=1001, help="seed riproducibile")
+    ap.add_argument("--rag-mode", choices=["budson", "casebook", "both"], default="budson")
     args = ap.parse_args()
 
     df = get_database()
@@ -55,10 +56,12 @@ def main() -> None:
     )
     gt = get_ground_truth(record)
 
-    print(f"Paziente {record.get('Codice')} | ground truth: {gt} | modello: {args.model}\n")
+    print(f"Paziente {record.get('Codice')} | ground truth: {gt} | "
+          f"modello: {args.model} | RAG: {args.rag_mode}\n")
 
     results = run_full_pipeline(
-        record, terapia, args.model, parent_store, child_store, seed=args.seed
+        record, terapia, args.model, parent_store, child_store,
+        seed=args.seed, rag_mode=args.rag_mode,
     )
 
     for step in (1, 2, 3):

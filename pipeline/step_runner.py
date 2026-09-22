@@ -24,10 +24,17 @@ from config.settings import (
     LLM_RETRIES_ON_INVALID,
     LLM_TEMPERATURE,
     OLLAMA_MODEL,
+    RAG_CORPORA,
+    RAG_DEFAULT_MODE,
     RAG_STEPS,
 )
 from data.biomarkers import compute_biomarker_assessment
-from data.loader import CSF_CORE_BIOMARKER_COLS, PLASMA_BIOMARKER_COLS, build_step_payload
+from data.loader import (
+    CSF_CORE_BIOMARKER_COLS,
+    PLASMA_BIOMARKER_COLS,
+    PLASMA_HIERARCHY_COLS,
+    build_step_payload,
+)
 from data.preprocessor import format_therapy_for_prompt
 from llm.ollama_client import generate_detailed, parse_json_response_detailed
 from llm.output_schemas import schema_for_step
@@ -65,12 +72,16 @@ def _check_step_feasibility(record: dict, step: int) -> tuple[bool, str]:
         return True, ""
 
     if step == 2:
-        n = _n_available(record, PLASMA_BIOMARKER_COLS)
-        return True, f"Plasma: {n}/{len(PLASMA_BIOMARKER_COLS)} biomarcatori disponibili"
+        n = _n_available(record, PLASMA_HIERARCHY_COLS)
+        if n == 0:
+            return False, "Nessun biomarcatore plasmatico gerarchico disponibile"
+        return True, f"Plasma gerarchico: {n}/{len(PLASMA_HIERARCHY_COLS)} disponibili"
 
     if step == 3:
         n = _n_available(record, CSF_CORE_BIOMARKER_COLS)
-        return True, f"CSF: {n}/{len(CSF_CORE_BIOMARKER_COLS)} biomarcatori disponibili"
+        if n == 0:
+            return False, "Nessun biomarcatore liquorale core disponibile"
+        return True, f"CSF core: {n}/{len(CSF_CORE_BIOMARKER_COLS)} disponibili"
 
     return False, f"Step {step} non valido"
 
@@ -99,10 +110,20 @@ def usable_result(step_result: Optional[dict]) -> Optional[dict]:
     return result
 
 
-def _skipped(step: int, codice: str, reason: str, model: str, seed: int | None = None) -> dict:
+def _skipped(
+    step: int,
+    codice: str,
+    reason: str,
+    model: str,
+    seed: int | None = None,
+    eligible: bool = False,
+    status: str = "ineligible",
+) -> dict:
     return {
         "step": step,
         "patient_code": codice,
+        "eligible": eligible,
+        "execution_status": status,
         "feasible": False,
         "skip_reason": reason,
         "result": None,
@@ -132,6 +153,7 @@ def run_step(
     step2_result: Optional[dict] = None,
     seed: int | None = None,
     rag_bundle: Optional[dict] = None,
+    rag_mode: str = RAG_DEFAULT_MODE,
     retries_on_invalid: int = LLM_RETRIES_ON_INVALID,
 ) -> dict:
     """
@@ -158,9 +180,15 @@ def run_step(
         return _skipped(step, codice, skip_reason, model, seed)
 
     if step == 2 and step1_result is None:
-        return _skipped(2, codice, "Risultato Step 1 mancante", model, seed)
-    if step == 3 and step2_result is None:
-        return _skipped(3, codice, "Risultato Step 2 mancante", model, seed)
+        return _skipped(
+            2, codice, "Risultato Step 1 mancante", model, seed,
+            eligible=True, status="blocked",
+        )
+    if step == 3 and step1_result is None:
+        return _skipped(
+            3, codice, "Risultato Step 1 mancante", model, seed,
+            eligible=True, status="blocked",
+        )
     if step not in (1, 2, 3):
         return _skipped(step, codice, f"Step {step} non valido", model, seed)
 
@@ -170,7 +198,9 @@ def run_step(
 
     active_rag = rag_bundle
     if step in RAG_STEPS and active_rag is None:
-        active_rag = prepare_rag_bundle(step, record, parent_store, child_store)
+        active_rag = prepare_rag_bundle(
+            step, record, parent_store, child_store, rag_mode=rag_mode
+        )
     rag_context = (active_rag or {}).get("context", "")
     rag_sources = (active_rag or {}).get("sources", [])
 
@@ -207,6 +237,8 @@ def run_step(
     return {
         "step": step,
         "patient_code": codice,
+        "eligible": True,
+        "execution_status": "completed",
         "feasible": True,
         "skip_reason": None,
         "result": result,
@@ -221,6 +253,7 @@ def run_step(
             "prompt_sha256": prompt_hash,
             "payload": payload,
             "computed_biomarkers": biomarker_assessment,
+            "rag_mode": rag_mode,
             "rag_queries": (active_rag or {}).get("queries", []),
             "rag_bundle_sha256": (active_rag or {}).get("sha256"),
         },
@@ -303,11 +336,22 @@ def _generate_validated(
     return final
 
 
-def prepare_rag_bundle(step: int, record: dict, parent_store, child_store) -> dict:
+def prepare_rag_bundle(
+    step: int,
+    record: dict,
+    parent_store,
+    child_store,
+    rag_mode: str = RAG_DEFAULT_MODE,
+) -> dict:
+    if rag_mode not in RAG_CORPORA:
+        raise ValueError(f"Modalità RAG non valida: {rag_mode}")
+    allowed_sources = set(RAG_CORPORA[rag_mode])
     if not (child_store and parent_store):
         context = "Knowledge base non disponibile."
         return {
             "step": step,
+            "rag_mode": rag_mode,
+            "allowed_sources": sorted(allowed_sources),
             "queries": [],
             "context": context,
             "sources": [],
@@ -315,12 +359,16 @@ def prepare_rag_bundle(step: int, record: dict, parent_store, child_store) -> di
         }
 
     queries = build_queries(step, clinical_context=_clinical_context(record))
-    docs = retrieve_context(child_store, parent_store, queries)
+    docs = retrieve_context(
+        child_store, parent_store, queries, allowed_sources=allowed_sources
+    )
     context = format_context_for_prompt(docs)
     sources = extract_rag_sources(docs)
-    digest_material = "\n".join(queries) + "\0" + context
+    digest_material = rag_mode + "\0" + "\n".join(queries) + "\0" + context
     return {
         "step": step,
+        "rag_mode": rag_mode,
+        "allowed_sources": sorted(allowed_sources),
         "queries": queries,
         "context": context,
         "sources": sources,
@@ -336,6 +384,7 @@ def run_full_pipeline(
     child_store=None,
     seed: int | None = None,
     rag_bundle: Optional[dict] = None,
+    rag_mode: str = RAG_DEFAULT_MODE,
     retries_on_invalid: int = LLM_RETRIES_ON_INVALID,
 ) -> dict:
     """
@@ -347,14 +396,14 @@ def run_full_pipeline(
     }
     s1 = run_step(
         1, record, terapia_parsed, model, parent_store, child_store,
-        seed=step_seeds[1], rag_bundle=rag_bundle,
+        seed=step_seeds[1], rag_bundle=rag_bundle, rag_mode=rag_mode,
         retries_on_invalid=retries_on_invalid,
     )
     step1_result = usable_result(s1)
 
     s2 = run_step(
         2, record, terapia_parsed, model, parent_store, child_store,
-        step1_result=step1_result, seed=step_seeds[2],
+        step1_result=step1_result, seed=step_seeds[2], rag_mode=rag_mode,
         retries_on_invalid=retries_on_invalid,
     )
     step2_result = usable_result(s2)
@@ -362,7 +411,8 @@ def run_full_pipeline(
     s3 = run_step(
         3, record, terapia_parsed, model, parent_store, child_store,
         step1_result=step1_result, step2_result=step2_result,
-        seed=step_seeds[3], retries_on_invalid=retries_on_invalid,
+        seed=step_seeds[3], rag_mode=rag_mode,
+        retries_on_invalid=retries_on_invalid,
     )
 
     return {
@@ -370,6 +420,7 @@ def run_full_pipeline(
         "step2": s2,
         "step3": s3,
         "model": model,
+        "rag_mode": rag_mode,
         "base_seed": seed,
         "step_seeds": step_seeds,
         "rag_bundle_sha256": (
@@ -379,6 +430,8 @@ def run_full_pipeline(
         "input_availability": {
             "plasma_available": _n_available(record, PLASMA_BIOMARKER_COLS),
             "plasma_total": len(PLASMA_BIOMARKER_COLS),
+            "plasma_hierarchy_available": _n_available(record, PLASMA_HIERARCHY_COLS),
+            "plasma_hierarchy_total": len(PLASMA_HIERARCHY_COLS),
             "csf_core_available": _n_available(record, CSF_CORE_BIOMARKER_COLS),
             "csf_core_total": len(CSF_CORE_BIOMARKER_COLS),
         },

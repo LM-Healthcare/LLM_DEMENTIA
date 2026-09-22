@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ChevronRight, Search, User, Brain, FlaskConical, CheckCircle, XCircle, AlertTriangle, Loader2, BookOpen, FileText, ChevronDown, ChevronUp, Play, Save } from 'lucide-react'
 import { api } from '@/api/client'
-import type { PatientSummary, PatientDetail, StepResult, RagSource, RagEvidence } from '@/types'
+import type { PatientSummary, PatientDetail, StepResult, RagSource, RagEvidence, RagMode } from '@/types'
 import AlluvialDiagram from '@/components/AlluvialDiagram'
 
 function RagSourcesPanel({
@@ -444,6 +444,7 @@ export default function PatientAnalysis() {
   const [selected, setSelected] = useState<PatientDetail | null>(null)
   const [models, setModels] = useState<string[]>([])
   const [model, setModel] = useState('')
+  const [ragMode, setRagMode] = useState<RagMode>('budson')
   const [step1, setStep1] = useState<StepResult | null>(null)
   const [step2, setStep2] = useState<StepResult | null>(null)
   const [step3, setStep3] = useState<StepResult | null>(null)
@@ -480,6 +481,7 @@ export default function PatientAnalysis() {
         patient_code: selected.codice,
         step,
         model,
+        rag_mode: ragMode,
         step1_result: step >= 2 ? step1?.model_result ?? step1?.result ?? null : null,
         step2_result: step >= 3 ? step2?.model_result ?? step2?.result ?? null : null,
       })
@@ -499,6 +501,7 @@ export default function PatientAnalysis() {
       const res = await api.saveIndividual({
         patient_code: selected.codice,
         model,
+        rag_mode: ragMode,
         step1: step1 ?? null,
         step2: step2 ?? null,
         step3: step3 ?? null,
@@ -520,7 +523,7 @@ export default function PatientAnalysis() {
     setStep1(null); setStep2(null); setStep3(null)
     try {
       setLoading({ 1: true, 2: true, 3: true })
-      const result = await api.runPipeline({ patient_code: selected.codice, model })
+      const result = await api.runPipeline({ patient_code: selected.codice, model, rag_mode: ragMode })
       setStep1(result.step1)
       setStep2(result.step2)
       setStep3(result.step3)
@@ -610,6 +613,17 @@ export default function PatientAnalysis() {
                   >
                     {models.length === 0 && <option value="">Nessun modello</option>}
                     {models.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                  <select
+                    value={ragMode}
+                    onChange={e => setRagMode(e.target.value as RagMode)}
+                    disabled={pipelineRunning}
+                    className="text-xs border border-border rounded-lg px-2 py-1.5 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-navy-500"
+                    title="Corpus usato dal RAG nello Step 1"
+                  >
+                    <option value="budson">RAG: Budson</option>
+                    <option value="casebook">RAG: Casebook</option>
+                    <option value="both">RAG: Entrambi</option>
                   </select>
                   <button
                     onClick={runPipeline}

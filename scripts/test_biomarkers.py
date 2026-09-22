@@ -12,6 +12,7 @@ if hasattr(sys.stdout, "buffer"):
 
 from data.biomarkers import assess_marker, compute_biomarker_assessment
 from data.loader import get_database, get_patient_record
+from pipeline.step_runner import _check_step_feasibility
 
 failures: list[str] = []
 
@@ -43,12 +44,18 @@ def main() -> None:
     assessment = compute_biomarker_assessment(record, 3)
     check("plasma Aβ42/40 patologico",
           assessment["plasma"]["Plasma_Ab4240"]["status"] == "PATOLOGICO")
+    check("gerarchia usa p-tau181 se p-tau217 manca",
+          assessment["plasma_hierarchy"]["selected_marker"] == "plasma_pt181",
+          str(assessment["plasma_hierarchy"]["selected_marker"]))
     check("funzione renale OK", assessment["safety"]["renal_status"] == "OK")
     check("funzione epatica OK", assessment["safety"]["hepatic_status"] == "OK")
     check("profilo T2 A-T-N-", assessment["atn"]["profile"] == "A-T-N-",
           assessment["atn"]["profile"])
     check("discordanza amiloide plasma/liquor",
           assessment["plasma_csf_concordance"]["amyloid"]["status"] == "DISCORDANT")
+
+    t94 = get_patient_record(get_database(), "T94")
+    check("T94 non eleggibile allo Step 3", _check_step_feasibility(t94, 3)[0] is False)
 
     print("\nRegole ATN")
     ratio_priority = {

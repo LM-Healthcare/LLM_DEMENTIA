@@ -1,0 +1,18 @@
+.git
+.devin
+__pycache__
+*.pyc
+*.pyo
+*.log
+.env
+frontend/node_modules
+frontend/dist
+chroma_db
+results
+Documenti_
+*.xlsx
+*.xls
+*.csv
+*.ipynb
+Documenti_old
+Continuum Demenze

@@ -1,0 +1,68 @@
+services:
+  ollama:
+    image: ollama/ollama:0.17.5
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11435:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  app:
+    image: llm-dementia:latest
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      DATABASE_PATH: /app/Database_FINALE_codificato.xlsx
+      REFERENCE_VALUES_PATH: /app/Valori_di_riferimento_lab.xlsx
+      DOCS_FOLDER: /app/Documenti_
+      CHROMA_DB_PATH: /app/chroma_db
+    ports:
+      - "8000:8000"
+    volumes: &project_volumes
+      - ./Database_FINALE_codificato.xlsx:/app/Database_FINALE_codificato.xlsx:ro
+      - ./Valori di riferimento_lab.xlsx:/app/Valori_di_riferimento_lab.xlsx:ro
+      - ./Documenti_:/app/Documenti_:ro
+      - ./Class_DX.pdf:/app/Class_DX.pdf:ro
+      - ./chroma_db:/app/chroma_db
+      - ./results:/app/results
+
+  evaluation:
+    image: llm-dementia:latest
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    profiles: ["evaluation"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      DATABASE_PATH: /app/Database_FINALE_codificato.xlsx
+      REFERENCE_VALUES_PATH: /app/Valori_di_riferimento_lab.xlsx
+      DOCS_FOLDER: /app/Documenti_
+      CHROMA_DB_PATH: /app/chroma_db
+    volumes: *project_volumes
+    command: ["python", "-m", "evaluation.run", "--help"]
+
+volumes:
+  ollama_models:

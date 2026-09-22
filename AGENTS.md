@@ -26,6 +26,7 @@ Interprete diretto, se serve: `C:/Users/filow/miniconda3/envs/LLM_DEMENTIA/pytho
 | Test retrieval | `python scripts/build_rag.py --probe` |
 | Test del validatore | `python scripts/test_validator.py` |
 | Test biomarcatori/ATN | `python scripts/test_biomarkers.py` |
+| Test flusso missing data | `python scripts/test_pipeline_flow.py` |
 | Test parser/evaluator | `python scripts/test_json_parser.py && python scripts/test_evaluator.py` |
 | Verifica input dei prompt | `python scripts/verify_prompts.py` |
 | Audit leakage/dataset | `python scripts/audit_leakage.py && python scripts/audit_dataset.py` |
@@ -33,6 +34,8 @@ Interprete diretto, se serve: `C:/Users/filow/miniconda3/envs/LLM_DEMENTIA/pytho
 | Test pipeline end-to-end | `python scripts/smoke_pipeline.py --model qwen3.5:latest --code T2 --seed 1001` |
 | Linter Python | `python -m pyflakes api config data llm pipeline rag scripts run.py` |
 | Typecheck + build frontend | `cd frontend && npm run build` |
+| Test modalità RAG | `python scripts/test_rag_modes.py` |
+| Smoke evaluation | `python -m evaluation.run --model llama3.1:8b --runs 1 --rag-mode casebook --patients T2 --experiment-name smoke --allow-dirty` |
 | Lista farmaci da mappare | `python scripts/extract_unidentified_drugs.py` |
 
 Ollama deve essere in esecuzione (`ollama serve`). Modelli dello studio:
@@ -63,8 +66,9 @@ temperature 0.1, num_ctx 12288, num_predict 4096, retry 0.
 - **`shutil.rmtree` sull'indice può fallire in silenzio** su Windows/OneDrive.
   Il reset va fatto eliminando le collezioni via API Chroma (`_reset_store`),
   altrimenti restano vive collezioni con la vecchia dimensione.
-- **La knowledge base è `Documenti_/`**, scansionata ricorsivamente. Contiene un
-  solo testo: Budson & Solomon, *A Practical Guide for Clinicians*.
+- **La knowledge base è `Documenti_/`**, con Budson & Solomon e Casebook of
+  Dementia. Le modalità `budson`, `casebook`, `both` filtrano lo stesso indice;
+  `both` limita ogni manuale a 5 fonti su 8. Ogni modifica ai PDF richiede rebuild.
 - **Il modello non deve mai vedere `Diagnosi_CODIFICATA`, `Diagnosi_TESTUALE` né
   `PAZIENTE`** (nomi reali). Il payload è costruito da whitelist in
   `build_step_payload`: non aggiungere passaggi che leggano il `record` grezzo nei

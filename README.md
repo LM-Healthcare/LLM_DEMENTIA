@@ -53,16 +53,31 @@ compila il frontend se manca e serve API e interfaccia su
 
 > Esegui sempre dall'ambiente `LLM_DEMENTIA`. Dall'ambiente `base` la versione di
 > ChromaDB è diversa e l'indice su disco non è leggibile.
+>
+> Se `ollama serve` risponde `bind ... only one usage`, Ollama è già in ascolto:
+> non avviare una seconda istanza. Verificare con `ollama list` o con
+> `curl http://127.0.0.1:11434/api/tags`; `ollama status` non esiste.
+
+---
+
+## Docker / server NVIDIA
+
+Per una RTX 3090 usare `docker-compose.yml`, che avvia Ollama in un container con
+GPU NVIDIA e monta database, manuali, indice e risultati come volumi. L'Ollama
+container è esposto sull'host a `127.0.0.1:11435` per non confliggere con un
+Ollama locale sulla porta 11434. Comandi completi in <evaluation/README.md>.
 
 ---
 
 ## Knowledge base RAG
 
-La KB è la cartella `Documenti_/`, scansionata ricorsivamente. Attualmente
-contiene un solo testo di riferimento: *Budson & Solomon — A Practical Guide for
-Clinicians*. I PDF della knowledge base non sono versionati. `Class_DX.pdf` è
-invece un documento di protocollo fornito dal team clinico e non viene
-indicizzato nel RAG.
+La KB è la cartella `Documenti_/`, scansionata ricorsivamente. Contiene
+*Budson & Solomon — A Practical Guide for Clinicians* e *Casebook of Dementia*.
+L'applicazione e l'evaluation consentono tre modalità: `budson`, `casebook` e
+`both`. In modalità combinata, al massimo 5 delle 8 fonti possono provenire dallo
+stesso manuale, così entrambi contribuiscono al contesto. I PDF della knowledge
+base non sono versionati. `Class_DX.pdf` è un documento di protocollo fornito dal
+team clinico e non viene indicizzato nel RAG.
 
 ```bash
 python scripts/build_rag.py --dry-run   # solo chunking, nessun embedding
@@ -85,6 +100,8 @@ python scripts/test_validator.py                      # coerenza dell'output dia
 python scripts/test_biomarkers.py                     # cut-off e profilo ATN deterministico
 python scripts/test_json_parser.py                    # parsing esatto/riparato tracciato
 python scripts/test_evaluator.py                      # metriche e output invalidi
+python scripts/test_pipeline_flow.py                  # step non eleggibili e fallback
+python scripts/test_rag_modes.py                      # filtri Budson/Casebook/both
 python scripts/verify_prompts.py                      # input effettivi dei tre step
 python scripts/audit_leakage.py                       # la diagnosi non raggiunge il modello
 python scripts/audit_dataset.py                       # schema, missingness e outlier
@@ -126,6 +143,7 @@ un exit code diverso da zero in caso di problema, quindi sono utilizzabili in CI
 │   ├── biomarkers.py       # status, affidabilità, ATN e concordanza deterministici
 │   ├── preprocessor.py     # standardizzazione terapia
 │   └── therapy_drugs.py    # dizionario farmaci italiani
+├── evaluation/             # CLI headless, JSONL/Excel, resume e README dedicato
 ├── frontend/               # React + TypeScript + TailwindCSS
 │   └── src/
 │       ├── pages/          # Dashboard, Analisi, Batch, Risultati...
@@ -153,6 +171,7 @@ un exit code diverso da zero in caso di problema, quindi sono utilizzabili in CI
 ├── Class_DX.pdf            # schema clinico delle classi, non indicizzato
 ├── results/                # risultati batch e individuali (gitignored)
 ├── chroma_db/              # vector store (gitignored)
+├── Dockerfile, docker-compose.yml  # deploy portabile NVIDIA/Ollama
 ├── environment.yml         # ambiente conda
 ├── requirements.txt        # dipendenze pip
 └── run.py                  # entry point unico
@@ -166,7 +185,7 @@ L'informazione è **cumulativa**: come un clinico che richiede esami via via pi�
 invasivi, ogni step vede tutto ciò che era disponibile ai precedenti più il
 ragionamento già prodotto e i nuovi dati del proprio livello. Il quadro clinico
 non viene mai dimenticato. Il bottone frontend “Esegui Pipeline”, il batch API e
-la futura evaluation chiamano tutti lo stesso `run_full_pipeline`: non esistono
+l'evaluation headless chiamano tutti lo stesso `run_full_pipeline`: non esistono
 orchestrazioni parallele con logiche differenti.
 
 ### Step 1 — Valutazione clinica + knowledge base
@@ -191,9 +210,10 @@ riferimento. Output: diagnosi primaria e tutte le differenziali con probabilità
 | `Creatinina`, `AST`, `ALT`, `eGFR_2021` | possibili confondenti: un'alterazione genera un avviso di cautela, senza invalidare automaticamente tutto il plasma |
 
 Riceve inoltre il quadro clinico completo dello Step 1 e il suo **output
-integrale** (diagnosi, distribuzione di probabilità, ragionamento per ogni
-ipotesi, elementi chiave, limitazioni dichiarate). Valuta l'attendibilità prima
-di interpretare, poi aggiorna le probabilità.
+integrale**. I marker diagnostici seguono la gerarchia concordata col neurologo:
+p-tau217, poi p-tau181, poi plasma Aβ42/40; viene usato il primo disponibile.
+Plasma NfL è informazione aggiuntiva, non dirimente. Se nessuno dei tre marker
+gerarchici è presente, lo Step 2 è non eleggibile e non viene chiamato il modello.
 
 ### Step 3 — Biomarcatori liquorali
 
@@ -206,8 +226,10 @@ gli indici epato-renali. Il codice calcola deterministicamente status dei
 marcatori, profilo ATN e concordanza plasma-liquor; il modello interpreta questi
 risultati senza ricalcolare cut-off. La normalità dei biomarcatori AD non dimostra
 automaticamente quale demenza alternativa sia corretta e la positività non
-esclude copatologie. La concordanza con `Diagnosi_CODIFICATA` è calcolata
-**a valle**, da `pipeline/evaluator.py`: il modello non la vede mai.
+esclude copatologie. CSF NfL è aggiuntivo e non determina l'eleggibilità. T94,
+privo di marker CSF core, resta nel dataset ma è non eleggibile allo Step 3. La
+concordanza con `Diagnosi_CODIFICATA` è calcolata **a valle**, da
+`pipeline/evaluator.py`: il modello non la vede mai.
 
 Gli step 2 e 3 girano sempre: se i biomarcatori mancano, il modello conferma la
 valutazione precedente dichiarando che l'assenza di dati non permette
@@ -243,7 +265,13 @@ risultato normalizzato, seed, opzioni, token e tempi Ollama.
 
 ---
 
-## Protocollo previsto per l'evaluation headless
+## Evaluation headless
+
+La pipeline multi-run è in `evaluation/` e ha documentazione dedicata:
+<evaluation/README.md>. Supporta i tre corpus RAG, seed prefissati, cache RAG,
+resume, JSONL append-only, Excel, manifest riproducibile e container NVIDIA.
+
+## Protocollo dell'evaluation headless
 
 I tre modelli dello studio sono `qwen3.5:latest`, `ministral-3:8b` e
 `llama3.1:8b`, eseguiti un modello per processo. Per ogni modello: 106 pazienti,
@@ -252,7 +280,7 @@ modelli. Il test su Qwen ha verificato che stesso prompt + stesso seed produce
 output byte-per-byte identico e che seed diversi producono output diversi. Una configurazione da 30 run richiede 3.180 pipeline e 9.540 chiamate
 LLM per modello.
 
-La futura CLI importerà direttamente `run_full_pipeline`: non conterrà una copia
+La CLI importa direttamente `run_full_pipeline`: non contiene una copia
 dei prompt o della logica applicativa. I bundle RAG saranno precomputati una
 volta per paziente e verificati via SHA-256, evitando centinaia di migliaia di
 embedding identici senza cambiare il prompt ricevuto dal modello.
@@ -303,21 +331,23 @@ otterrebbe il 68% di accuracy. L'accuracy da sola non è informativa. Per questo
 `evaluator.py` riporta anche **Cohen's κ**, precision/recall/F1 per classe e la
 matrice di confusione.
 
-La completezza è eterogenea: solo 29 pazienti hanno tutti e quattro i marker
-plasmatici, 6 non ne hanno nessuno; 40 hanno tutti i marker CSF e uno non ne ha
-nessuno. L'analisi pre-CSF deve quindi essere stratificata per disponibilità.
-`audit_dataset.py` segnala inoltre due valori estremi da validare col team:
-`T101 plasma_ptau217=87` (cut-off 0.21) e `T81 CSF_NfL=3501` (cut-off 300).
+La completezza grezza è eterogenea: solo 29 pazienti hanno tutti e quattro i
+marker plasmatici e 6 non ne hanno nessuno. Con la gerarchia clinica, però, 100
+pazienti sono eleggibili allo Step 2: 36 usano p-tau217 e 64 p-tau181; nessun
+paziente deve ricorrere ad Aβ42/40 come unico marker. Per il CSF, 105/106 sono
+eleggibili allo Step 3. L'analisi riporta comunque disponibilità e marker scelto.
+`audit_dataset.py` registra anche gli outlier: `T101 plasma_ptau217` è stato
+corretto da 87 a 0.87; `T81 CSF_NfL=3501` è stato confermato dal team e resta
+esplicitamente tracciato come valore estremo accettato.
 
 `TERAPIA` è intenzionalmente inclusa ma può incorporare la precedente impressione
 clinica: Donepezil/Memantina possono indurre il modello a favorire AD. Questo
 possibile incorporation bias deve essere dichiarato e può essere studiato con
 un'analisi di sensibilità senza terapia.
 
-Resta da validare col neurologo la nomenclatura della classe `PD`: il database e
-il codice usano `PD`, mentre `Class_DX.pdf` descrive `PDD/DLB` come “Lewy body
-diseases spectrum”. Il codice non viene rinominato automaticamente per evitare
-di alterare il ground truth senza approvazione clinica.
+La classe mantiene il codice `PD` per corrispondere al database, ma la sua
+etichetta clinica segue `Class_DX.pdf`: “Demenza associata a Parkinson / spettro
+Lewy body (PDD/DLB)”. Le diagnosi possibili restano otto.
 
 ---
 

@@ -29,6 +29,7 @@ from config.settings import (
     RAG_BM25_WEIGHT,
     RAG_CANDIDATES_PER_QUERY,
     RAG_MAX_PER_PAGE,
+    RAG_MAX_PER_SOURCE,
     RAG_RRF_K,
     RAG_TOP_K,
 )
@@ -46,8 +47,8 @@ _DIAGNOSIS_TERMS: dict[str, tuple[str, str]] = {
     "LATE": ("encefalopatia TDP-43 correlata all'età",
              "limbic-predominant age-related TDP-43 encephalopathy"),
     "FTD": ("demenza frontotemporale", "frontotemporal dementia behavioural variant"),
-    "PD": ("malattia di Parkinson e decadimento cognitivo",
-           "Parkinson disease dementia Lewy body"),
+    "PD": ("demenza associata a Parkinson spettro corpi di Lewy",
+           "Parkinson disease dementia Lewy body disease spectrum PDD DLB"),
 }
 
 _STEP1_GENERAL = [
@@ -165,6 +166,7 @@ def retrieve_context(
     queries: list[str],
     top_k: int = RAG_TOP_K,
     use_bm25: bool = True,
+    allowed_sources: set[str] | None = None,
 ) -> list[Document]:
     """
     Esegue il retrieval ibrido multi-query e restituisce i parent chunk
@@ -184,10 +186,10 @@ def retrieve_context(
     parent_quotes: dict[str, list[tuple[float, str]]] = defaultdict(list)
 
     for query in queries:
-        for rank, child in enumerate(_semantic_hits(child_store, query)):
+        for rank, child in enumerate(_semantic_hits(child_store, query, allowed_sources)):
             _accumulate(parent_scores, parent_quotes, child, rank, sem_weight)
         if lexical:
-            for rank, child in enumerate(_lexical_hits(lexical, query)):
+            for rank, child in enumerate(_lexical_hits(lexical, query, allowed_sources)):
                 _accumulate(parent_scores, parent_quotes, child, rank, RAG_BM25_WEIGHT)
 
     if not parent_scores:
@@ -198,6 +200,8 @@ def retrieve_context(
 
     selected: list[Document] = []
     per_page: dict[tuple[str, int], int] = defaultdict(int)
+    per_source: dict[str, int] = defaultdict(int)
+    diversify_sources = allowed_sources is not None and len(allowed_sources) > 1
 
     for cid in ranked_ids:
         if len(selected) >= top_k:
@@ -205,10 +209,14 @@ def retrieve_context(
         doc = parents.get(cid)
         if doc is None:
             continue
-        key = (doc.metadata.get("source", ""), doc.metadata.get("page", -1))
+        source = doc.metadata.get("source", "")
+        key = (source, doc.metadata.get("page", -1))
         if per_page[key] >= RAG_MAX_PER_PAGE:
             continue
+        if diversify_sources and per_source[source] >= RAG_MAX_PER_SOURCE:
+            continue
         per_page[key] += 1
+        per_source[source] += 1
 
         quotes = [q for _, q in sorted(parent_quotes[cid], key=lambda x: -x[0])]
         doc.metadata = {
@@ -231,21 +239,36 @@ def _accumulate(scores, quotes, child: Document, rank: int, weight: float) -> No
     quotes[pid].append((contribution, quote.strip()))
 
 
-def _semantic_hits(child_store: Chroma, query: str) -> list[Document]:
+def _semantic_hits(
+    child_store: Chroma, query: str, allowed_sources: set[str] | None
+) -> list[Document]:
     try:
+        source_filter = (
+            {"source": {"$in": sorted(allowed_sources)}} if allowed_sources else None
+        )
+        if source_filter:
+            return child_store.similarity_search(
+                query, k=RAG_CANDIDATES_PER_QUERY, filter=source_filter
+            )
         return child_store.similarity_search(query, k=RAG_CANDIDATES_PER_QUERY)
     except BaseException as e:
         print(f"[Retriever] Errore ricerca semantica: {e}")
         return []
 
 
-def _lexical_hits(lexical: dict, query: str) -> list[Document]:
+def _lexical_hits(
+    lexical: dict, query: str, allowed_sources: set[str] | None
+) -> list[Document]:
     tokens = _tokenize(query)
     if not tokens:
         return []
     scores = lexical["bm25"].get_scores(tokens)
     docs = lexical["docs"]
-    order = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+    eligible = (
+        range(len(scores)) if not allowed_sources
+        else (i for i, doc in enumerate(docs) if doc.metadata.get("source") in allowed_sources)
+    )
+    order = sorted(eligible, key=lambda i: scores[i], reverse=True)
     return [docs[i] for i in order[:RAG_CANDIDATES_PER_QUERY] if scores[i] > 0]
 
 

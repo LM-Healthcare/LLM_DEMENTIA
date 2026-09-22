@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { Play, StopCircle, Loader2, CheckCircle, XCircle, BarChart3 } from 'lucide-react'
 import { api } from '@/api/client'
-import type { ModelInfo, BatchProgress } from '@/types'
+import type { ModelInfo, BatchProgress, RagMode } from '@/types'
 
 export default function BatchAnalysis() {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [model, setModel] = useState('')
+  const [ragMode, setRagMode] = useState<RagMode>('budson')
   const [progress, setProgress] = useState<BatchProgress>({ status: 'idle' })
   const [starting, setStarting] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -35,7 +36,7 @@ export default function BatchAnalysis() {
     if (!model) return
     setStarting(true)
     try {
-      await api.runBatch({ model })
+      await api.runBatch({ model, rag_mode: ragMode })
       const p = await api.getBatchProgress()
       setProgress(p)
     } finally {
@@ -68,6 +69,19 @@ export default function BatchAnalysis() {
             >
               {models.length === 0 && <option value="">Nessun modello disponibile</option>}
               {models.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
+            </select>
+          </div>
+          <div className="flex-1">
+            <label className="block text-xs font-semibold text-slate-500 mb-1.5">Corpus RAG</label>
+            <select
+              value={ragMode}
+              onChange={e => setRagMode(e.target.value as RagMode)}
+              disabled={progress.status === 'running'}
+              className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-slate-50 focus:outline-none focus:ring-2 focus:ring-navy-500 disabled:opacity-50"
+            >
+              <option value="budson">Budson & Solomon</option>
+              <option value="casebook">Casebook of Dementia</option>
+              <option value="both">Entrambi</option>
             </select>
           </div>
           <div className="flex-shrink-0 pt-5">
